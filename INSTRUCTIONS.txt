@@ -1,0 +1,120 @@
+NYC TLC Fare Prediction – Execution Instructions
+=================================================
+
+PREREQUISITES
+-------------
+Python >= 3.8 (tested on 3.8.5 via Anaconda)
+
+Install dependencies:
+    pip install -r requirements.txt
+
+Set up Weights & Biases (required for experiment tracking):
+    pip install wandb
+    wandb login              # enter your API key from https://wandb.ai/authorize
+    # W&B project: "nyc-tlc-fare-prediction"
+
+DIRECTORY LAYOUT
+----------------
+dsma_project/
+├── training_set/           # 2024-01 … 2025-12 parquet files
+├── test_set/               # 2026-01, 2026-02 parquet files
+├── taxi_zone_lookup.csv
+├── 01_EDA_Main.ipynb       # EDA notebook (run this first for context)
+├── src/                    # modular source package
+│   ├── config.py           # all paths, constants, model defaults
+│   ├── data/               # loader.py, cleaner.py
+│   ├── features/           # engineer.py (sklearn transformer), domain.py
+│   ├── models/             # trainer.py, evaluator.py, registry.py
+│   ├── drift/              # detector.py (PSI + KS test)
+│   └── tracking/           # wandb_tracker.py
+├── train.py                # STEP 1 – train all models
+├── evaluate.py             # STEP 2 – evaluate on 2026 test set
+└── sweep.py                # OPTIONAL – W&B hyperparameter sweep
+
+STEP-BY-STEP EXECUTION
+-----------------------
+
+STEP 1 – TRAINING (2024 + 2025 data)
+    python train.py
+
+Optional flags:
+    --sample 100000     rows sampled per monthly file (default 150,000)
+    --no-wandb          run without W&B logging
+    --tag myrun         sub-folder name for saved artifacts (default: latest)
+
+Example (fast run for testing):
+    python train.py --sample 30000 --tag test-run
+
+This will:
+  • Load and clean 2024+2025 parquet files
+  • Engineer 40+ features (domain rules, cyclic time, target encoding)
+  • Train LightGBM, XGBoost, Random Forest, Ridge Regression
+  • Log all runs to W&B project "nyc-tlc-fare-prediction"
+  • Save best model + artifacts to models/latest/
+  • Write error analysis CSVs to logs/
+
+STEP 2 – EVALUATION (2026 test data)
+    python evaluate.py
+
+Optional flags:
+    --no-wandb          run without W&B logging
+    --tag latest        which saved artifact tag to load (default: latest)
+
+This will:
+  • Load and clean 2026 Jan+Feb test parquet files
+  • Apply the same feature engineering pipeline (loaded from artifact)
+  • Compute RMSE, MAE, R², MAPE on the test set
+  • Run drift detection comparing 2025 reference vs 2026 test distribution
+  • Write segmented error analysis to logs/
+
+OPTIONAL – HYPERPARAMETER SWEEP
+    python sweep.py --model lgbm --count 20
+
+This creates a W&B Bayesian sweep over LightGBM hyperparameters and runs
+20 trials. Results are visible in the W&B UI. After the sweep, update
+MODEL_DEFAULTS["lgbm"] in src/config.py with the best params and re-run train.py.
+
+OUTPUTS
+-------
+models/latest/
+  feature_engineer.joblib   – fitted FeatureEngineer (zone lookup + target encoding)
+  scaler.joblib             – StandardScaler (for Ridge baseline)
+  lgbm.joblib               – trained LightGBM model
+  xgb.joblib                – trained XGBoost model
+  rf.joblib                 – trained Random Forest model
+  ridge.joblib              – trained Ridge Regression model
+  best_model.joblib         – copy of the winning model
+
+logs/
+  model_comparison_latest.csv       – val RMSE/MAE/R² for all models
+  feature_importance_latest.csv     – feature importance from best model
+  error_by_pu_borough_latest.csv    – segmented errors by pickup borough
+  error_by_pickup_hour_latest.csv   – segmented errors by hour
+  error_by_distance_bin_latest.csv  – segmented errors by trip distance bin
+  test_error_by_*.csv               – same for test set
+  feature_drift_latest.csv          – PSI / KS drift report (2025 → 2026)
+
+TARGET VARIABLE
+---------------
+total_fare_amount = total_amount − tip_amount
+
+INPUT FEATURES (at inference time / booking moment)
+----------------------------------------------------
+PULocationID, DOLocationID, trip_distance, pickup_hour,
+pickup_dayofweek, pickup_month, pickup_year
+
+ENGINEERED FEATURES (domain-based, ~40 total)
+----------------------------------------------
+- Cyclic time: hour_sin, hour_cos, dow_sin, dow_cos
+- Borough/zone: pu_borough, do_borough, is_manhattan_pu, is_cross_borough …
+- Airport flags: is_jfk_pu, is_lga_pu, is_airport_route …
+- Estimated surcharges: airport_fee_est ($1.75), congestion_surcharge_est ($2.50),
+  cbd_fee_est ($9.00 from Jan 2025), mta_tax_est ($0.50), improvement_surcharge_est ($1.00)
+- Interaction features: distance_x_airport, distance_x_rush
+- Target encoding: pu_zone_mean_fare, do_zone_mean_fare
+- Distance transforms: log_distance, distance_sq
+
+W&B EXPERIMENT TRACKING PAGE
+-----------------------------
+Project: https://wandb.ai/<your-username>/nyc-tlc-fare-prediction
+(Replace <your-username> with your W&B account name after running train.py)
