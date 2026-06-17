@@ -17,7 +17,7 @@ test_set/
 *.parquet
 
 # Saved models (large – tracked via W&B artifacts)
-models/
+/models/
 
 # Logs output
 logs/
