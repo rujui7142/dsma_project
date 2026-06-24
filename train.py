@@ -34,7 +34,7 @@ from src.config import (
 from src.data.loader import load_parquet_files, load_taxi_zones
 from src.data.cleaner import clean_training_data
 from src.features.engineer import FeatureEngineer, get_raw_input_features
-from src.models.trainer import train_all_models, select_best_model
+from src.models.trainer import train_all_models, select_best_model, build_ridge_scaler
 from src.models.evaluator import error_analysis, get_feature_importance, residual_summary
 from src.models.registry import save_run_artifacts, get_artifact_paths
 from src.tracking.wandb_tracker import WandbTracker
@@ -54,6 +54,44 @@ def temporal_split(df: pd.DataFrame):
     for yr, mo in VAL_YEARS_MONTHS:
         is_val |= (df["pickup_year"] == yr) & (df["pickup_month"] == mo)
     return df[~is_val].copy(), df[is_val].copy()
+
+
+def forward_chain_splits(df: pd.DataFrame, n_splits: int = 5):
+    """Yield (fold, train_df, val_df) using temporal forward-chaining CV.
+
+    Months are sorted chronologically; each fold expands the training window
+    by one chunk and validates on the next chunk.
+    """
+    months = sorted(df.groupby(["pickup_year", "pickup_month"]).groups.keys())
+    n = len(months)
+    test_size = max(1, n // (n_splits + 1))
+    initial_train = n - n_splits * test_size
+
+    month_key = df["pickup_year"] * 100 + df["pickup_month"]
+
+    for fold in range(n_splits):
+        train_end = initial_train + fold * test_size
+        val_end = min(train_end + test_size, n)
+        if train_end >= n:
+            break
+
+        train_keys = {yr * 100 + mo for yr, mo in months[:train_end]}
+        val_keys = {yr * 100 + mo for yr, mo in months[train_end:val_end]}
+
+        tr_start = f"{months[0][0]}-{months[0][1]:02d}"
+        tr_end = f"{months[train_end - 1][0]}-{months[train_end - 1][1]:02d}"
+        vl_start = f"{months[train_end][0]}-{months[train_end][1]:02d}"
+        vl_end = f"{months[val_end - 1][0]}-{months[val_end - 1][1]:02d}"
+
+        tr = df[month_key.isin(train_keys)]
+        vl = df[month_key.isin(val_keys)]
+
+        print(
+            f"  Fold {fold + 1}/{n_splits}: "
+            f"train {len(tr):,} ({tr_start}..{tr_end})  "
+            f"val {len(vl):,} ({vl_start}..{vl_end})"
+        )
+        yield fold, tr, vl
 
 
 def main():
@@ -88,7 +126,53 @@ def main():
     print(f"  Train: {len(train_df):,}  Val: {len(val_df):,}")
 
     # ------------------------------------------------------------------
-    # 4. Feature engineering
+    # 4. Forward-chaining cross-validation (5 folds on train_df)
+    # ------------------------------------------------------------------
+    print("\n=== Forward-chaining CV (5 folds) ===")
+    _MODEL_NAMES = ("lgbm", "xgb", "rf", "ridge")
+    cv_metrics = {name: [] for name in _MODEL_NAMES}
+    cv_fold_rows = []
+
+    for fold, tr_df, vl_df in forward_chain_splits(train_df, n_splits=5):
+        X_tr_raw = get_raw_input_features(tr_df)
+        X_vl_raw = get_raw_input_features(vl_df)
+        y_tr = tr_df[TARGET_COL].reset_index(drop=True)
+        y_vl = vl_df[TARGET_COL].reset_index(drop=True)
+
+        fold_eng = FeatureEngineer(zones_df)
+        fold_eng.fit(X_tr_raw, y_tr)
+        X_tr_feat = fold_eng.get_tree_features(fold_eng.transform(X_tr_raw))
+        X_vl_feat = fold_eng.get_tree_features(fold_eng.transform(X_vl_raw))
+
+        fold_results, _ = train_all_models(X_tr_feat, y_tr, X_vl_feat, y_vl)
+
+        for name, (_, m) in fold_results.items():
+            cv_metrics[name].append(m)
+            cv_fold_rows.append({"fold": fold + 1, "model": name, **m})
+
+    # CV summary table
+    cv_summary = {}
+    print("\n  CV summary (mean ± std over folds):")
+    print(f"  {'Model':<8}  {'RMSE mean':>10}  {'RMSE std':>9}  {'MAE mean':>9}")
+    print("  " + "-" * 44)
+    for name in _MODEL_NAMES:
+        rmse_vals = [m["rmse"] for m in cv_metrics[name]]
+        mae_vals  = [m["mae"]  for m in cv_metrics[name]]
+        cv_summary[name] = {
+            "mean_rmse": float(np.mean(rmse_vals)),
+            "std_rmse":  float(np.std(rmse_vals)),
+            "mean_mae":  float(np.mean(mae_vals)),
+        }
+        s = cv_summary[name]
+        print(f"  {name:<8}  {s['mean_rmse']:>10.4f}  {s['std_rmse']:>9.4f}  {s['mean_mae']:>9.4f}")
+
+    cv_best = min(cv_summary, key=lambda n: cv_summary[n]["mean_rmse"])
+    print(f"\n  CV winner: {cv_best.upper()} (RMSE {cv_summary[cv_best]['mean_rmse']:.4f})")
+    cv_df = pd.DataFrame(cv_fold_rows)
+    cv_df.to_csv(LOGS_DIR / f"cv_results_{args.tag}.csv", index=False)
+
+    # ------------------------------------------------------------------
+    # 5. Feature engineering (on full train split for final model)
     # ------------------------------------------------------------------
     print("\n=== Feature engineering ===")
     X_train_raw = get_raw_input_features(train_df)
@@ -107,13 +191,13 @@ def main():
     print(f"  Feature matrix: {X_train_feat.shape[1]} features, {len(X_train_feat):,} rows")
 
     # ------------------------------------------------------------------
-    # 5. Train all models
+    # 6. Train all models (final, on full train split)
     # ------------------------------------------------------------------
-    print("\n=== Training all models ===")
+    print("\n=== Training all models (final) ===")
     results, scaler = train_all_models(X_train_feat, y_train, X_val_feat, y_val)
 
     # ------------------------------------------------------------------
-    # 6. Log to W&B
+    # 7. Log to W&B
     # ------------------------------------------------------------------
     print("\n=== Logging to W&B ===")
     all_metrics = {name: m for name, (_, m) in results.items()}
@@ -126,17 +210,22 @@ def main():
             "n_val": len(val_df),
             "n_features": X_train_feat.shape[1],
             "val_split": str(VAL_YEARS_MONTHS),
+            "cv_winner": cv_best,
         },
         tags=["training", args.tag],
     ):
         for name, metrics in all_metrics.items():
             tracker.log({f"{name}/{k}": v for k, v in metrics.items()})
+        # CV summary metrics
+        for name, s in cv_summary.items():
+            tracker.log({f"cv/{name}/mean_rmse": s["mean_rmse"], f"cv/{name}/std_rmse": s["std_rmse"]})
+        tracker.log_dataframe(cv_df, "cv_fold_results")
 
         artifact_paths = get_artifact_paths(args.tag)
         tracker.log_all_models(artifact_paths, all_metrics)
 
     # ------------------------------------------------------------------
-    # 7. Select and save best model
+    # 8. Select and save best model
     # ------------------------------------------------------------------
     best_name = select_best_model(results)
     best_model = results[best_name][0]

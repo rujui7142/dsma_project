@@ -145,9 +145,10 @@ MODEL_DEFAULTS = {
         "verbosity": 0,
     },
     "rf": {
-        "n_estimators": 300,
-        "max_depth": 20,
+        "n_estimators": 100,
+        "max_depth": 15,
         "min_samples_leaf": 10,
+        "max_samples": 200_000,   # cap bootstrap size per tree — keeps RF fast on large datasets
         "random_state": 42,
         "n_jobs": -1,
     },
