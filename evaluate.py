@@ -28,7 +28,13 @@ from src.models.evaluator import error_analysis, get_feature_importance, residua
 from src.models.registry import load_inference_artifacts, save_run_artifacts
 from src.models.trainer import compute_metrics
 from src.drift.detector import generate_drift_report, detect_performance_drift
-from src.tracking.wandb_tracker import WandbTracker
+from src.drift.evidently_detector import (
+    run_evidently_drift_report,
+    parse_drift_results,
+    run_evidently_concept_drift_report,
+    parse_concept_drift_results,
+)
+from src.tracking.wandb_tracker import WandbTracker, ExperimentTracker
 
 
 def parse_args():
@@ -147,6 +153,51 @@ def main():
     else:
         drift_report = {}
         print("  No 2025 reference files found – skipping drift analysis.")
+
+    # ------------------------------------------------------------------
+    # 7b. Evidently concept drift (reference vs 2026 test)
+    # ------------------------------------------------------------------
+    evidently_results = {}
+    if ref_files:
+        print("\n=== Evidently concept drift (2025 ref -> 2026 test) ===")
+        try:
+            from pathlib import Path as _Path
+            _Path("outputs").mkdir(exist_ok=True)
+
+            # Dataset + label drift: engineered features + target column
+            ref_ev = X_ref_eng.copy()
+            ref_ev[TARGET_COL] = ref_df[TARGET_COL].values
+            cur_ev = X_test_eng.copy()
+            cur_ev[TARGET_COL] = y_test.values
+
+            ev_report = run_evidently_drift_report(ref_ev, cur_ev)
+            evidently_results = parse_drift_results(ev_report)
+            ev_report.save_html("outputs/evidently_drift_report.html")
+
+            # Concept drift: model predictions on both reference and test
+            X_ref_feat = engineer.get_tree_features(X_ref_eng)
+            ref_perf = X_ref_feat.copy()
+            ref_perf[TARGET_COL] = ref_df[TARGET_COL].values
+            if is_linear:
+                ref_perf["prediction"] = best_model.predict(scaler.transform(X_ref_feat.values))
+            else:
+                ref_perf["prediction"] = best_model.predict(X_ref_feat)
+
+            cur_perf = X_test_feat.copy()
+            cur_perf[TARGET_COL] = y_test.values
+            cur_perf["prediction"] = y_pred
+
+            concept_report = run_evidently_concept_drift_report(ref_perf, cur_perf)
+            concept_results = parse_concept_drift_results(concept_report)
+            concept_report.save_html("outputs/evidently_concept_drift_report.html")
+
+            print(f"  Overall drift    : {evidently_results['overall_drift']}")
+            print(f"  Features drifted : {evidently_results['n_drifted']} ({evidently_results['share_drifted']:.1%})")
+            print(f"  Concept drift    : {concept_results['concept_drift_detected']}")
+            print(f"  MAE increase     : {concept_results['mae_pct_increase']:.1%}")
+            print(f"  Evidently HTML   : outputs/evidently_drift_report.html")
+        except Exception as exc:
+            print(f"  Evidently analysis skipped: {exc}")
 
     # ------------------------------------------------------------------
     # 8. Log to W&B

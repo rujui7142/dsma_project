@@ -1,10 +1,6 @@
-"""Drift detection: data drift (PSI, KS test) and performance drift.
+"""Drift detection: data drift (PSI, KS test), performance drift, and monthly monitoring."""
 
-References:
-  - Lecture 3: Hyperparameter tuning, error analysis and model drift
-  - Lecture 4: Drift mitigation and automation
-"""
-
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -168,3 +164,178 @@ def generate_drift_report(
         report["curr_metrics"] = compute_metrics(y_true_curr.values, y_pred_curr)
 
     return report
+
+
+# ---------------------------------------------------------------------------
+# Monthly drift monitoring
+# ---------------------------------------------------------------------------
+
+def load_monthly_eval(path: str) -> pd.DataFrame:
+    """Load a parquet file containing trips from multiple months."""
+    df = pd.read_parquet(path)
+    df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"])
+    return df
+
+
+def run_monthly_drift_analysis(
+    monthly_eval_df: pd.DataFrame,
+    reference_df: pd.DataFrame,
+    engineer: Any,
+    model: Any,
+    output_dir: str = "outputs/plots",
+    ref_model_mae: Optional[float] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Compute per-month drift metrics vs a reference period.
+
+    Parameters
+    ----------
+    monthly_eval_df : cleaned DataFrame with pickup_year, pickup_month, TARGET_COL.
+    reference_df    : cleaned reference DataFrame (e.g. validation split).
+    engineer        : fitted FeatureEngineer.
+    model           : fitted model.
+    ref_model_mae   : known reference MAE; if None it is computed from reference_df.
+    """
+    from src.config import TARGET_COL
+    from src.features.engineer import get_raw_input_features
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    # --- reference MAE ---
+    if ref_model_mae is None:
+        X_ref_raw = get_raw_input_features(reference_df)
+        X_ref_eng = engineer.transform(X_ref_raw)
+        X_ref_feat = engineer.get_tree_features(X_ref_eng)
+        y_ref = reference_df[TARGET_COL].reset_index(drop=True)
+        y_ref_pred = model.predict(X_ref_feat)
+        ref_model_mae = float(np.mean(np.abs(y_ref.values - y_ref_pred)))
+
+    # reference target distribution for PSI
+    X_ref_raw_all = get_raw_input_features(reference_df)
+    X_ref_eng_all = engineer.transform(X_ref_raw_all)
+    ref_target = reference_df[TARGET_COL].reset_index(drop=True)
+
+    feature_cols = [c for c in engineer.get_feature_names() if c in X_ref_eng_all.columns]
+
+    records = []
+    drift_reports: Dict[str, Any] = {}
+
+    month_groups = (
+        monthly_eval_df
+        .groupby(["pickup_year", "pickup_month"])
+        .groups
+    )
+
+    for (yr, mo), idx in sorted(month_groups.items()):
+        month_df = monthly_eval_df.loc[idx].reset_index(drop=True)
+        month_label = month_df["tpep_pickup_datetime"].iloc[0].strftime("%b") if "tpep_pickup_datetime" in month_df.columns else f"{yr}-{mo:02d}"
+        month_num = int(mo)
+
+        X_cur_raw = get_raw_input_features(month_df)
+        X_cur_eng = engineer.transform(X_cur_raw)
+        X_cur_feat = engineer.get_tree_features(X_cur_eng)
+        y_cur = month_df[TARGET_COL].reset_index(drop=True)
+
+        y_pred = model.predict(X_cur_feat)
+        mae = float(np.mean(np.abs(y_cur.values - y_pred)))
+        mae_delta = mae - ref_model_mae
+        mae_pct = mae_delta / max(ref_model_mae, 1e-8)
+
+        # label drift
+        label_psi = compute_psi(ref_target, y_cur)
+        label_ks_stat, label_ks_pval = compute_ks_test(ref_target, y_cur)
+        label_drifted = label_psi > 0.10
+
+        # feature drift
+        feat_drift = detect_feature_drift(X_ref_eng_all, X_cur_eng, feature_cols)
+        n_drifted = int((feat_drift["drift_level"] == "significant").sum())
+
+        rec = {
+            "month": month_label,
+            "month_num": month_num,
+            "year": int(yr),
+            "mae": mae,
+            "mae_delta": mae_delta,
+            "mae_pct_increase": mae_pct * 100,
+            "n_trips": len(month_df),
+            "label_psi": label_psi,
+            "label_ks_pvalue": label_ks_pval,
+            "label_drifted": label_drifted,
+            "label_ref_mean": float(ref_target.mean()),
+            "label_cur_mean": float(y_cur.mean()),
+            "n_drifted_features": n_drifted,
+        }
+        records.append(rec)
+
+        drift_reports[month_label] = {
+            "feature_drift": feat_drift,
+            "summary": {
+                "n_features_checked": len(feat_drift),
+                "n_significant_drift": n_drifted,
+                "n_moderate_drift": int((feat_drift["drift_level"] == "moderate").sum()),
+            },
+        }
+
+        print(
+            f"  {month_label} {yr}: MAE={mae:.2f} (ref={ref_model_mae:.2f}, "
+            f"delta={mae_delta:+.2f})  label_drift={label_drifted}  "
+            f"feat_drifted={n_drifted}"
+        )
+
+    monthly_summary = pd.DataFrame(records)
+    return monthly_summary, drift_reports
+
+
+def plot_monthly_mae_curve(
+    monthly_summary: pd.DataFrame,
+    output_dir: str = "outputs/plots",
+) -> Any:
+    """Line chart of MAE over months."""
+    import matplotlib.pyplot as plt
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(monthly_summary["month"], monthly_summary["mae"], marker="o", linewidth=2)
+    ax.axhline(
+        monthly_summary["mae"].iloc[0] if len(monthly_summary) else 0,
+        linestyle="--", color="grey", label="reference MAE",
+    )
+    ax.set_xlabel("Month")
+    ax.set_ylabel("MAE ($)")
+    ax.set_title("Model MAE Over Time (concept drift curve)")
+    ax.legend()
+    plt.tight_layout()
+
+    out = Path(output_dir) / "monthly_mae_curve.png"
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    print(f"  MAE curve saved -> {out}")
+    return fig
+
+
+def plot_label_drift_distribution(
+    reference_df: pd.DataFrame,
+    current_df: pd.DataFrame,
+    ref_label: str = "Reference",
+    cur_label: str = "Current",
+    output_dir: str = "outputs/plots",
+) -> Any:
+    """Overlapping histogram of target distributions (reference vs current)."""
+    import matplotlib.pyplot as plt
+    from src.config import TARGET_COL
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    ref_vals = reference_df[TARGET_COL].dropna()
+    cur_vals = current_df[TARGET_COL].dropna()
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(ref_vals, bins=50, alpha=0.5, label=ref_label, density=True)
+    ax.hist(cur_vals, bins=50, alpha=0.5, label=cur_label, density=True)
+    ax.set_xlabel("Total Fare Amount ($)")
+    ax.set_ylabel("Density")
+    ax.set_title("Label Drift: Fare Distribution Shift")
+    ax.legend()
+    plt.tight_layout()
+
+    out = Path(output_dir) / "label_drift_distribution.png"
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    print(f"  Label drift plot saved -> {out}")
+    return fig

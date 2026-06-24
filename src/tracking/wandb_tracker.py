@@ -202,3 +202,166 @@ class _NoopRun:
 
     def __exit__(self, *args):
         pass
+
+
+# ---------------------------------------------------------------------------
+# ExperimentTracker — eager init style (matches Lecture 4 API)
+# ---------------------------------------------------------------------------
+
+class ExperimentTracker:
+    """W&B run that starts immediately on construction (no context manager needed).
+
+    Mirrors the Lecture 4 API:
+        tracker = ExperimentTracker(project, run_name, tags, config)
+        tracker.log_summary({...})
+        url = tracker.finish()
+    """
+
+    def __init__(
+        self,
+        project: str = WANDB_PROJECT,
+        run_name: str = "run",
+        tags: Optional[List[str]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        enabled: bool = True,
+    ):
+        self.enabled = enabled and _WANDB_AVAILABLE
+        self._run = None
+        if self.enabled:
+            self._run = wandb.init(
+                project=project,
+                name=run_name,
+                tags=tags or [],
+                config=config or {},
+                reinit=True,
+            )
+
+    def log_summary(self, metrics: Dict[str, Any]) -> None:
+        if self.enabled and self._run is not None:
+            for k, v in metrics.items():
+                self._run.summary[k] = v
+
+    def log(self, metrics: Dict[str, Any]) -> None:
+        if self.enabled:
+            wandb.log(metrics)
+
+    def log_table(self, df: pd.DataFrame, table_name: str) -> None:
+        if self.enabled:
+            wandb.log({table_name: wandb.Table(dataframe=df.reset_index(drop=True))})
+
+    def log_plot(self, fig: Any, name: str) -> None:
+        if self.enabled:
+            wandb.log({name: fig})
+
+    def log_image_file(self, path: Path, name: str) -> None:
+        if self.enabled and Path(path).exists():
+            wandb.log({name: wandb.Image(str(path))})
+
+    def log_artifact(
+        self,
+        path: Path,
+        artifact_name: str,
+        artifact_type: str = "dataset",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not self.enabled:
+            return
+        art = wandb.Artifact(artifact_name, type=artifact_type, metadata=metadata or {})
+        art.add_file(str(path))
+        wandb.log_artifact(art)
+
+    def log_code(self) -> None:
+        if self.enabled and self._run is not None:
+            self._run.log_code()
+
+    def alert(self, title: str, text: str) -> None:
+        if self.enabled and self._run is not None:
+            self._run.alert(title=title, text=text)
+
+    def finish(self) -> str:
+        if self.enabled and self._run is not None:
+            url = self._run.get_url() or ""
+            wandb.finish()
+            return url
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# W&B artifact versioning helpers (standalone functions)
+# ---------------------------------------------------------------------------
+
+def log_data_artifact(
+    tracker: ExperimentTracker,
+    path: Path,
+    name: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Log a data file (parquet, csv) as a versioned W&B artifact."""
+    tracker.log_artifact(path, artifact_name=name, artifact_type="dataset", metadata=metadata)
+
+
+def log_model_artifact(
+    tracker: ExperimentTracker,
+    path: Path,
+    name: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Log a serialised model file as a versioned W&B artifact."""
+    tracker.log_artifact(path, artifact_name=name, artifact_type="model", metadata=metadata)
+
+
+def log_feature_artifact(
+    tracker: ExperimentTracker,
+    path: Path,
+    active_feature_steps: Optional[List[str]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Log a feature pipeline artifact (scaler/engineer pkl) to W&B."""
+    meta = dict(metadata or {})
+    if active_feature_steps is not None:
+        meta["feature_columns"] = active_feature_steps
+    tracker.log_artifact(path, artifact_name="feature-pipeline", artifact_type="pipeline", metadata=meta)
+
+
+# ---------------------------------------------------------------------------
+# Per-month drift run logger
+# ---------------------------------------------------------------------------
+
+def log_monthly_drift_run(
+    month_label: str,
+    month_num: int,
+    mae: float,
+    drift_report: Dict[str, Any],
+    project: str = WANDB_PROJECT,
+    mae_delta: float = 0.0,
+    n_trips: int = 0,
+    label_drift: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Create a W&B run for a single month's drift metrics (enables x=month_num line charts)."""
+    if not _WANDB_AVAILABLE:
+        return
+
+    tracker = ExperimentTracker(
+        project=project,
+        run_name=f"drift-{month_label}",
+        tags=["drift-monthly", month_label],
+        config={"month": month_label, "month_num": month_num, "n_trips": n_trips},
+    )
+    summary: Dict[str, Any] = {
+        "month_num": month_num,
+        "mae": mae,
+        "mae_delta": mae_delta,
+    }
+    if label_drift:
+        for k, v in label_drift.items():
+            summary[f"label_{k}"] = v
+
+    feat_drift = drift_report.get("feature_drift")
+    if feat_drift is not None and not feat_drift.empty:
+        summary["n_significant_feature_drift"] = int(
+            (feat_drift["drift_level"] == "significant").sum()
+        )
+        tracker.log_table(feat_drift, "feature_drift")
+
+    tracker.log_summary(summary)
+    tracker.finish()
