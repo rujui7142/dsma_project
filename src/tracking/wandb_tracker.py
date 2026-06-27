@@ -119,6 +119,7 @@ class WandbTracker:
         config: Optional[Dict[str, Any]] = None,
         tags: Optional[List[str]] = None,
         notes: Optional[str] = None,
+        group: Optional[str] = None,
     ) -> Any:
         """Start a new W&B run and return the run object (or a no-op context)."""
         if not self.enabled:
@@ -130,6 +131,7 @@ class WandbTracker:
             config=config or {},
             tags=tags or [],
             notes=notes,
+            group=group,
             reinit=True,
         )
 

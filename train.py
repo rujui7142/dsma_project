@@ -249,6 +249,8 @@ def main():
     print("\n=== Logging to W&B ===")
     all_metrics = {name: m for name, (_, m) in results.items()}
 
+    best_name = select_best_model(results)
+
     with tracker.init_run(
         name=f"full-run-{args.tag}",
         config={
@@ -260,6 +262,7 @@ def main():
             "cv_winner": cv_best,
         },
         tags=["training", args.tag],
+        group="engineered",
     ):
         for name, metrics in all_metrics.items():
             tracker.log({f"{name}/{k}": v for k, v in metrics.items()})
@@ -271,10 +274,21 @@ def main():
         artifact_paths = get_artifact_paths(args.tag)
         tracker.log_all_models(artifact_paths, all_metrics)
 
+        # Shared top-level metrics — same keys as baseline.py so both groups
+        # appear on the same W&B comparison chart
+        best_m = all_metrics[best_name]
+        tracker.log({
+            "val_rmse":   best_m["rmse"],
+            "val_mae":    best_m["mae"],
+            "val_r2":     best_m["r2"],
+            "val_mape":   best_m["mape"],
+            "best_model": best_name,
+            "n_features": X_train_feat.shape[1],
+        })
+
     # ------------------------------------------------------------------
     # 8. Select and save best model
     # ------------------------------------------------------------------
-    best_name = select_best_model(results)
     best_model = results[best_name][0]
     print(f"\n=== Best model: {best_name.upper()} ===")
     print(f"  Val RMSE: {all_metrics[best_name]['rmse']:.4f}")

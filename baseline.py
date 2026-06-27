@@ -92,6 +92,9 @@ def main():
     summary_df.to_csv(out, index=False)
     print(f"\nSaved: {out}")
 
+    best = min(results.values(), key=lambda m: m["rmse"])
+    best_name = min(results, key=lambda k: results[k]["rmse"])
+
     with tracker.init_run(
         name=f"baseline-{args.tag}",
         config={
@@ -103,9 +106,21 @@ def main():
             "note": "raw features only — no target encoding, no zone lookup",
         },
         tags=["baseline", args.tag],
+        group="baseline",
     ):
+        # Per-model breakdown
         for name, m in results.items():
             tracker.log({f"{name}/{k}": v for k, v in m.items()})
+        # Shared top-level metrics — same keys as train.py so W&B can
+        # plot baseline vs engineered on the same chart
+        tracker.log({
+            "val_rmse": best["rmse"],
+            "val_mae":  best["mae"],
+            "val_r2":   best["r2"],
+            "val_mape": best["mape"],
+            "best_model": best_name,
+            "n_features": len(RAW_FEATURES),
+        })
         tracker.log_dataframe(summary_df, "baseline_comparison")
 
     return 0
