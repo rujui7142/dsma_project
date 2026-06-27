@@ -1,0 +1,83 @@
+name: ML Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      run_baseline:
+        description: "Re-run baseline (raw features, no engineering)"
+        type: boolean
+        default: false
+      sample_size:
+        description: "Rows sampled per monthly file"
+        type: string
+        default: "5000"
+
+jobs:
+  train-and-evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ----------------------------------------------------------------
+      # Data — downloaded from the public TLC S3 bucket.
+      # Files that already exist are skipped (safe for local re-runs).
+      # ----------------------------------------------------------------
+      - name: Download TLC data
+        run: python scripts/download_data.py
+
+      # ----------------------------------------------------------------
+      # Baseline — raw 7-feature model, no engineering.
+      # Logged to W&B with a stable "baseline" tag so it shows as a
+      # fixed reference line in every W&B dashboard comparison.
+      # Only runs when explicitly requested via workflow_dispatch.
+      # ----------------------------------------------------------------
+      - name: Baseline (raw features, no engineering)
+        if: ${{ github.event.inputs.run_baseline == 'true' }}
+        run: |
+          python baseline.py \
+            --sample ${{ github.event.inputs.sample_size || '5000' }} \
+            --tag baseline
+
+      # ----------------------------------------------------------------
+      # Full pipeline — cleaned data + full feature engineering + all
+      # four models + 5-fold forward-chaining CV.
+      # Tagged with the short commit SHA so every push creates a new
+      # W&B run and results accumulate over time.
+      # ----------------------------------------------------------------
+      - name: Set run tag
+        run: echo "RUN_TAG=ci-${GITHUB_SHA::8}" >> $GITHUB_ENV
+
+      - name: Train (CV + final models)
+        run: |
+          python train.py \
+            --sample ${{ github.event.inputs.sample_size || '5000' }} \
+            --tag ${{ env.RUN_TAG }}
+
+      # ----------------------------------------------------------------
+      # Evaluate — test set (2026 Jan + Feb).
+      # Skipped gracefully if test data could not be downloaded.
+      # ----------------------------------------------------------------
+      - name: Evaluate on 2026 test set
+        run: |
+          if ls test_set/*.parquet 1>/dev/null 2>&1; then
+            python evaluate.py --tag ${{ env.RUN_TAG }}
+          else
+            echo "No test parquets found — skipping evaluate.py"
+          fi

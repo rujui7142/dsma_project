@@ -67,6 +67,26 @@ XGB_SWEEP_CONFIG: Dict[str, Any] = {
     },
 }
 
+RF_SWEEP_CONFIG: Dict[str, Any] = {
+    "method": "random",
+    "metric": {"name": "val_rmse", "goal": "minimize"},
+    "parameters": {
+        "n_estimators": {"values": [50, 100, 200]},
+        "max_depth": {"values": [8, 10, 12, 15, 20]},
+        "min_samples_leaf": {"values": [5, 10, 20, 50]},
+        "max_features": {"values": ["sqrt", "log2", 0.5, 0.7]},
+        "max_samples": {"values": [100_000, 150_000, 200_000]},
+    },
+}
+
+RIDGE_SWEEP_CONFIG: Dict[str, Any] = {
+    "method": "grid",
+    "metric": {"name": "val_rmse", "goal": "minimize"},
+    "parameters": {
+        "alpha": {"values": [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]},
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Tracker class

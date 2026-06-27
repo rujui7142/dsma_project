@@ -62,12 +62,21 @@ def filter_valid_trips(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     return df
 
 
-def clip_outliers(df: pd.DataFrame, cols: List[str], upper_pct: float = 0.99) -> pd.DataFrame:
-    """Clip extreme values at the given upper percentile per column."""
-    df = df.copy()
+def filter_outliers(df: pd.DataFrame, cols: List[str], upper_pct: float = 0.99, verbose: bool = True) -> pd.DataFrame:
+    """Remove rows where any col exceeds its upper_pct quantile.
+
+    Matches the EDA df_model step: rows with extreme trip_distance,
+    trip_duration_min, or total_fare_amount are dropped, not clipped.
+    """
+    n_before = len(df)
+    mask = pd.Series(True, index=df.index)
     for col in cols:
         upper = df[col].quantile(upper_pct)
-        df[col] = df[col].clip(upper=upper)
+        mask &= df[col] <= upper
+    df = df[mask].copy()
+    if verbose:
+        removed = n_before - len(df)
+        print(f"  filter_outliers (p{upper_pct:.0%}): removed {removed:,} rows ({removed/n_before*100:.1f}%)")
     return df
 
 
@@ -93,7 +102,7 @@ def clean_training_data(df: pd.DataFrame) -> pd.DataFrame:
     df = compute_trip_duration(df)
     df = compute_target(df)
     df = filter_valid_trips(df)
-    df = clip_outliers(
+    df = filter_outliers(
         df,
         cols=["trip_distance", "trip_duration_min", TARGET_COL],
         upper_pct=CLEANING["outlier_percentile"],

@@ -67,4 +67,8 @@ def get_artifact_paths(run_tag: str = "latest") -> Dict[str, Path]:
         "feature_engineer": folder / "feature_engineer.joblib",
         "scaler": folder / "scaler.joblib",
         "best_model": folder / "best_model.joblib",
+        "lgbm": folder / "lgbm.joblib",
+        "xgb": folder / "xgb.joblib",
+        "rf": folder / "rf.joblib",
+        "ridge": folder / "ridge.joblib",
     }

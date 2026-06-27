@@ -166,17 +166,19 @@ def train_all_models(
     y_train: pd.Series,
     X_val: pd.DataFrame,
     y_val: pd.Series,
+    model_names: tuple = ("lgbm", "xgb", "rf", "ridge"),
 ) -> Dict[str, Tuple[Any, Dict[str, float]]]:
-    """Train all four model types and return their results.
+    """Train the requested model types and return their results.
 
-    Returns
-    -------
-    {model_name: (fitted_model, val_metrics)}
+    Parameters
+    ----------
+    model_names : subset of ('lgbm', 'xgb', 'rf', 'ridge') to train.
+                  Pass a smaller tuple to resume after a partial crash.
     """
     scaler = build_ridge_scaler(X_train)
     results: Dict[str, Tuple[Any, Dict[str, float]]] = {}
 
-    for name in ("lgbm", "xgb", "rf", "ridge"):
+    for name in model_names:
         model, metrics = train_model(
             name, X_train, y_train, X_val, y_val, scaler=scaler
         )

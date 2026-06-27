@@ -21,6 +21,7 @@ Flow:
 
 import argparse
 import json
+import joblib
 import sys
 from pathlib import Path
 
@@ -28,16 +29,33 @@ import numpy as np
 import pandas as pd
 
 from src.config import (
-    DATA_PATHS, SAMPLE_CONFIG, TARGET_COL, VAL_YEARS_MONTHS,
+    DATA_PATHS, MODEL_DIR, SAMPLE_CONFIG, TARGET_COL, VAL_YEARS_MONTHS,
     WANDB_PROJECT, LOGS_DIR,
 )
 from src.data.loader import load_parquet_files, load_taxi_zones
 from src.data.cleaner import clean_training_data
 from src.features.engineer import FeatureEngineer, get_raw_input_features
-from src.models.trainer import train_all_models, select_best_model, build_ridge_scaler
+from src.models.trainer import train_all_models, train_model, select_best_model, build_ridge_scaler
 from src.models.evaluator import error_analysis, get_feature_importance, residual_summary
 from src.models.registry import save_run_artifacts, get_artifact_paths
 from src.tracking.wandb_tracker import WandbTracker
+
+
+_ALL_MODELS = ("lgbm", "xgb", "rf", "ridge")
+
+
+def _cv_cache_path(cache_dir: Path, fold: int, model: str) -> Path:
+    return cache_dir / f"fold{fold}_{model}.json"
+
+
+def _load_cv_cache(cache_dir: Path, fold: int, model: str):
+    p = _cv_cache_path(cache_dir, fold, model)
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def _save_cv_cache(cache_dir: Path, fold: int, model: str, metrics: dict):
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _cv_cache_path(cache_dir, fold, model).write_text(json.dumps(metrics))
 
 
 def parse_args():
@@ -129,11 +147,21 @@ def main():
     # 4. Forward-chaining cross-validation (5 folds on train_df)
     # ------------------------------------------------------------------
     print("\n=== Forward-chaining CV (5 folds) ===")
-    _MODEL_NAMES = ("lgbm", "xgb", "rf", "ridge")
-    cv_metrics = {name: [] for name in _MODEL_NAMES}
+    cv_metrics = {name: [] for name in _ALL_MODELS}
     cv_fold_rows = []
+    cv_cache_dir = MODEL_DIR / args.tag / ".cv_cache"
 
     for fold, tr_df, vl_df in forward_chain_splits(train_df, n_splits=5):
+        cached = {n: _load_cv_cache(cv_cache_dir, fold, n) for n in _ALL_MODELS}
+        missing = [n for n, m in cached.items() if m is None]
+
+        if not missing:
+            print(f"  Fold {fold + 1}: all models loaded from cache")
+            for name in _ALL_MODELS:
+                cv_metrics[name].append(cached[name])
+                cv_fold_rows.append({"fold": fold + 1, "model": name, **cached[name]})
+            continue
+
         X_tr_raw = get_raw_input_features(tr_df)
         X_vl_raw = get_raw_input_features(vl_df)
         y_tr = tr_df[TARGET_COL].reset_index(drop=True)
@@ -144,9 +172,13 @@ def main():
         X_tr_feat = fold_eng.get_tree_features(fold_eng.transform(X_tr_raw))
         X_vl_feat = fold_eng.get_tree_features(fold_eng.transform(X_vl_raw))
 
-        fold_results, _ = train_all_models(X_tr_feat, y_tr, X_vl_feat, y_vl)
+        fold_results, _ = train_all_models(X_tr_feat, y_tr, X_vl_feat, y_vl, model_names=missing)
 
         for name, (_, m) in fold_results.items():
+            _save_cv_cache(cv_cache_dir, fold, name, m)
+
+        for name in _ALL_MODELS:
+            m = fold_results[name][1] if name in fold_results else cached[name]
             cv_metrics[name].append(m)
             cv_fold_rows.append({"fold": fold + 1, "model": name, **m})
 
@@ -155,7 +187,7 @@ def main():
     print("\n  CV summary (mean ± std over folds):")
     print(f"  {'Model':<8}  {'RMSE mean':>10}  {'RMSE std':>9}  {'MAE mean':>9}")
     print("  " + "-" * 44)
-    for name in _MODEL_NAMES:
+    for name in _ALL_MODELS:
         rmse_vals = [m["rmse"] for m in cv_metrics[name]]
         mae_vals  = [m["mae"]  for m in cv_metrics[name]]
         cv_summary[name] = {
@@ -193,8 +225,23 @@ def main():
     # ------------------------------------------------------------------
     # 6. Train all models (final, on full train split)
     # ------------------------------------------------------------------
+    train_cache_dir = MODEL_DIR / args.tag / ".train_cache"
+    scaler = build_ridge_scaler(X_train_feat)
+    results = {}
+
     print("\n=== Training all models (final) ===")
-    results, scaler = train_all_models(X_train_feat, y_train, X_val_feat, y_val)
+    for name in _ALL_MODELS:
+        _m_path = train_cache_dir / f"{name}.pkl"
+        _r_path = train_cache_dir / f"{name}_metrics.json"
+        if _m_path.exists() and _r_path.exists():
+            print(f"\n[{name.upper()}] loaded from cache")
+            results[name] = (joblib.load(_m_path), json.loads(_r_path.read_text()))
+            continue
+        model, metrics = train_model(name, X_train_feat, y_train, X_val_feat, y_val, scaler=scaler)
+        train_cache_dir.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, _m_path)
+        _r_path.write_text(json.dumps(metrics))
+        results[name] = (model, metrics)
 
     # ------------------------------------------------------------------
     # 7. Log to W&B
