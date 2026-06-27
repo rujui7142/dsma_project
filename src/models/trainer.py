@@ -133,6 +133,9 @@ def train_model(
         model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
 
     elif model_name == "rf":
+        ms = model.get_params().get("max_samples")
+        if ms is not None and ms > len(X_train):
+            model.set_params(max_samples=None)
         model.fit(X_train, y_train)
 
     elif model_name == "ridge":

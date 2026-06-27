@@ -75,9 +75,10 @@ def main():
     print(f"  val RMSE={m['rmse']:.4f}  MAE={m['mae']:.4f}  R2={m['r2']:.4f}")
 
     print("\n[RF-BASELINE] training ...")
+    rf_max_samples = 100_000 if len(X_train) >= 100_000 else None
     rf = RandomForestRegressor(
         n_estimators=100, max_depth=15, min_samples_leaf=10,
-        max_samples=100_000, n_jobs=-1, random_state=42,
+        max_samples=rf_max_samples, n_jobs=-1, random_state=42,
     )
     rf.fit(X_train, y_train)
     y_pred = rf.predict(X_val)
