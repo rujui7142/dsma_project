@@ -168,7 +168,7 @@ def main():
     # ------------------------------------------------------------------
     # Persist selection + plots
     # ------------------------------------------------------------------
-    out_json = LOGS_DIR / f"selected_features_{args.tag}.json"
+    out_json = LOGS_DIR / "selected_features.json"
     out_json.write_text(json.dumps({
         "champion": champion,
         "best_k": best_k,
@@ -191,7 +191,7 @@ def main():
     ax.set_title(f"Feature-count vs CV RMSE — {champion}")
     ax.legend()
     plt.tight_layout()
-    sweep_png = OUTPUTS_PLOTS / f"feature_selection_sweep_{args.tag}.png"
+    sweep_png = OUTPUTS_PLOTS / "feature_selection_sweep.png"
     fig.savefig(sweep_png, dpi=120, bbox_inches="tight")
     print(f"  Sweep plot -> {sweep_png}")
 
@@ -201,7 +201,7 @@ def main():
     )
     bar_fig = plot_shap_bar(
         shap_bar_df, top_n=min(30, n_feat), output_dir=str(OUTPUTS_PLOTS),
-        filename=f"feature_selection_shap_{args.tag}.png",
+        filename="feature_selection_shap.png",
         title=f"Candidate feature importance (SHAP over folds) — {champion}",
     )
 

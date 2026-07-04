@@ -231,7 +231,7 @@ def main():
         print("No live months to evaluate.")
         return 0
 
-    records_df.to_csv(LOGS_DIR / f"walkforward_{args.tag}.csv", index=False)
+    records_df.to_csv(LOGS_DIR / f"walkforward_{args.model}.csv", index=False)
 
     frozen_avg = records_df["frozen_mae"].mean()
     adaptive_avg = records_df["adaptive_mae"].mean()
@@ -240,7 +240,7 @@ def main():
     print(f"\n  Avg MAE  frozen={frozen_avg:.4f}  adaptive={adaptive_avg:.4f}  "
           f"improvement={improvement:+.1f}%  (mitigations fired: {n_fired})")
 
-    fig = plot_walkforward(records_df, str(OUTPUTS_PLOTS), f"walkforward_{args.tag}.png")
+    fig = plot_walkforward(records_df, str(OUTPUTS_PLOTS), f"walkforward_{args.model}.png")
 
     # ------------------------------------------------------------------
     # W&B logging

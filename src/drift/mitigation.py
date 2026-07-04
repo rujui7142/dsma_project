@@ -24,11 +24,18 @@ def _simple_fit(model_name: str, X: pd.DataFrame, y: pd.Series, sample_weight=No
     full n_estimators ceiling and overfits, so mitigation can end up *worse*
     than the frozen model.
     """
-    from src.models.trainer import get_model, cap_rf_max_samples, EARLY_STOPPING_ROUNDS
+    from src.models.trainer import (
+        get_model, cap_rf_max_samples, EARLY_STOPPING_ROUNDS, build_monotone_constraints,
+    )
     import lightgbm as lgb
     import xgboost as xgb
 
     model = get_model(model_name)
+    constraints = build_monotone_constraints(list(X.columns))
+    if any(constraints) and isinstance(model, (lgb.LGBMRegressor, xgb.XGBRegressor)):
+        model.set_params(monotone_constraints=(
+            constraints if isinstance(model, lgb.LGBMRegressor) else tuple(constraints)
+        ))
 
     # Chronological tail validation split (combined data is old rows followed by
     # recent rows, so the tail is the freshest period).

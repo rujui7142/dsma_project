@@ -158,6 +158,30 @@ ROUTE_TE_SMOOTHING = 20.0
 SELECTED_FEATURES = None
 
 # ---------------------------------------------------------------------------
+# Monotonic constraints for tree models (LightGBM / XGBoost).
+#
+# Root cause fixed: fold-3 investigation found the Jan-2025 CBD $9 fee pushes
+# estimated_surcharges / cbd_fee_est to values that never existed for SHORT
+# trips during training (previously, only long/expensive airport trips had
+# comparably high combined surcharges). Unconstrained trees route these
+# out-of-range values to whatever leaf covers that boundary — which was
+# calibrated on rare high-surcharge/long-distance rows — causing systematic
+# OVERprediction (~+$7-8 bias) on CBD trips post-shift.
+#
+# A monotone_constraints=+1 on these fare-additive features forces the model
+# to extrapolate them as a smooth non-decreasing effect on predicted fare
+# (the true domain relationship) instead of an arbitrary leaf lookup, which
+# fixes exactly this failure mode for values beyond the training range.
+# ---------------------------------------------------------------------------
+MONOTONIC_INCREASING_FEATURES = [
+    "trip_distance", "log_distance", "distance_sq", "sqrt_distance",
+    "est_metered_fare",
+    "cbd_fee_est", "airport_fee_est", "congestion_surcharge_est", "extra_est",
+    "estimated_surcharges",
+    "route_mean_fare", "pu_zone_mean_fare", "do_zone_mean_fare",
+]
+
+# ---------------------------------------------------------------------------
 # Sampling
 # ---------------------------------------------------------------------------
 SAMPLE_CONFIG = {

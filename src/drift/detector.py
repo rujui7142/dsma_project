@@ -20,10 +20,21 @@ def compute_psi(
 ) -> float:
     """Compute the Population Stability Index between two distributions.
 
-    Interpretation:
+    Interpretation (for well-behaved, continuous features):
         PSI < 0.10  → no significant shift
         0.10–0.25   → moderate shift
         > 0.25      → significant shift
+
+    IMPORTANT: PSI is bounded below by 0 (every summed term is non-negative)
+    but has NO upper bound of 1 — that is a common misconception. For a
+    binary/step-like feature that goes from 100% one value in `reference` to
+    100% a different value in `current` (complete separation, e.g. a flag
+    that is always 0 pre-cutoff and always 1 post-cutoff), the epsilon-
+    smoothed formula above genuinely produces PSI ~ -2*ln(epsilon), which is
+    ~36.8 for epsilon=1e-8. This is mathematically correct, not a bug — it
+    means "this feature's distribution completely changed," the most extreme
+    drift possible. The 0.1/0.25 thresholds still apply directionally (higher
+    = more drift) but shouldn't be read as if PSI were capped near 1.
     """
     combined = pd.concat([reference, current])
     breakpoints = np.linspace(combined.min(), combined.max(), bins + 1)
@@ -350,6 +361,81 @@ def plot_feature_drift_over_folds(
     out = Path(output_dir) / filename
     fig.savefig(out, dpi=120, bbox_inches="tight")
     print(f"  Feature-drift-over-folds chart saved -> {out}")
+    return fig
+
+
+def plot_psi_heatmap(
+    drift_long: pd.DataFrame,
+    output_dir: str = "outputs/plots",
+    filename: str = "psi_heatmap.png",
+    vmax: float = 1.0,
+    max_features: Optional[int] = None,
+) -> Any:
+    """Feature x fold PSI heatmap — full view for manual drift investigation.
+
+    Unlike plot_feature_drift_over_folds (which only shows the top-N line
+    traces), this shows every feature as a row so you can scan the whole
+    candidate set for "what's drifting and where" at a glance.
+
+    Color scale is capped at *vmax* (default 1.0, well above the 0.25
+    "significant" threshold) so a few extreme outliers — e.g. a step-function
+    feature that goes from 100%-0 to 100%-1, which can score PSI in the tens
+    (see compute_psi docstring) — don't wash out the color contrast for every
+    other feature. Any cell whose true value exceeds vmax is annotated with
+    its exact number so the magnitude is still visible, not just "maxed out".
+
+    Parameters
+    ----------
+    drift_long   : tidy DataFrame with columns [fold, feature, psi].
+    vmax         : color-scale cap. Values above this print in white text.
+    max_features : cap the number of rows (most-drifting first); None = all.
+    """
+    import matplotlib.pyplot as plt
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    if drift_long.empty:
+        return None
+
+    peak = drift_long.groupby("feature")["psi"].max().sort_values(ascending=False)
+    features = list(peak.index) if max_features is None else list(peak.head(max_features).index)
+    folds = sorted(drift_long["fold"].unique())
+
+    pivot = (
+        drift_long[drift_long["feature"].isin(features)]
+        .pivot(index="feature", columns="fold", values="psi")
+        .reindex(index=features, columns=folds)
+    )
+
+    fig_h = max(6.0, 0.24 * len(features))
+    fig_w = max(8.0, 1.3 * len(folds) + 3.0)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
+    im = ax.imshow(pivot.values, aspect="auto", cmap="YlOrRd", vmin=0, vmax=vmax)
+    ax.set_xticks(range(len(folds)))
+    ax.set_xticklabels([str(f) for f in folds])
+    ax.set_yticks(range(len(features)))
+    ax.set_yticklabels(features, fontsize=7)
+    ax.set_xlabel("Fold (time →)")
+    ax.set_title("PSI heatmap — feature x fold (color capped at "
+                  f"{vmax:g}; exact value shown when clipped)")
+
+    # Annotate only clipped (>vmax) cells with their true value so extreme
+    # drift is still legible without needing every one of ~500 cells labeled.
+    for i, feature in enumerate(features):
+        for j, fold in enumerate(folds):
+            val = pivot.values[i, j]
+            if np.isfinite(val) and val > vmax:
+                ax.text(j, i, f"{val:.1f}", ha="center", va="center",
+                        fontsize=6, color="black",
+                        bbox=dict(boxstyle="round,pad=0.15", fc="white", alpha=0.7))
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label(f"PSI (capped at {vmax:g})")
+    plt.tight_layout()
+
+    out = Path(output_dir) / filename
+    fig.savefig(out, dpi=130, bbox_inches="tight")
+    print(f"  PSI heatmap saved -> {out}  ({len(features)} features x {len(folds)} folds)")
     return fig
 
 

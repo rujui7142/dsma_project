@@ -183,6 +183,56 @@ def plot_metric_over_folds(
     return fig
 
 
+def plot_monthly_temporal_trend(
+    monthly_df: pd.DataFrame,
+    output_dir: str = "outputs/plots",
+    filename: str = "monthly_temporal_trend.png",
+    shift_month_label: Optional[str] = None,
+) -> Any:
+    """Two-panel month-by-month view: raw actual fare trend + champion MAE.
+
+    Parameters
+    ----------
+    monthly_df : columns [month_label, actual_mean_fare, champion_mae], one row
+                 per calendar month, sorted chronologically. actual_mean_fare
+                 is a plain data statistic (no model); champion_mae comes from
+                 an expanding walk-forward evaluation and may be NaN for the
+                 initial training-only months.
+    shift_month_label : month label to mark with a vertical line (e.g. the
+                 first month affected by a known regime change, like the CBD
+                 fee). Drawn on both panels if present in monthly_df.
+    """
+    import matplotlib.pyplot as plt
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    x = monthly_df["month_label"].astype(str).tolist()
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+
+    ax1.plot(x, monthly_df["actual_mean_fare"], marker="o", linewidth=2, color="#4e79a7")
+    ax1.set_ylabel("Actual mean fare ($)")
+    ax1.set_title("Raw fare trend by calendar month (no model)")
+
+    ax2.plot(x, monthly_df["champion_mae"], marker="o", linewidth=2, color="#e15759")
+    ax2.set_ylabel("Champion MAE ($)")
+    ax2.set_xlabel("Month (time →)")
+    ax2.set_title("Champion model MAE by calendar month (expanding walk-forward)")
+
+    if shift_month_label is not None and shift_month_label in x:
+        for ax in (ax1, ax2):
+            ax.axvline(x.index(shift_month_label), ls="--", color="grey", alpha=0.7,
+                       label=f"{shift_month_label} (regime change)")
+        ax1.legend()
+
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+
+    out = Path(output_dir) / filename
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    print(f"  Monthly temporal trend chart saved -> {out}")
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Feature importance
 # ---------------------------------------------------------------------------

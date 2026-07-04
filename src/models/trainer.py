@@ -21,7 +21,7 @@ from sklearn.preprocessing import StandardScaler
 import lightgbm as lgb
 import xgboost as xgb
 
-from src.config import MODEL_DEFAULTS, TARGET_COL
+from src.config import MODEL_DEFAULTS, TARGET_COL, MONOTONIC_INCREASING_FEATURES
 from src.features.engineer import LGBM_CAT_FEATURES, TREE_FEATURES
 
 
@@ -57,6 +57,21 @@ def get_model(model_name: str, params: Optional[Dict[str, Any]] = None) -> Any:
     raise ValueError(f"Unknown model_name: {model_name!r}")
 
 
+def build_monotone_constraints(feature_names) -> list:
+    """Return a +1/0 constraint vector aligned to *feature_names*.
+
+    +1 on fare-additive features (distance transforms, surcharge estimates,
+    zone/route mean-fare encodings) forces LightGBM/XGBoost to extrapolate
+    them as a smooth non-decreasing effect on predicted fare, instead of
+    routing out-of-training-range values to an arbitrary leaf. This fixes the
+    fold-3 CBD-fee overprediction bug: without it, estimated_surcharges values
+    that never existed for short trips during training got misrouted to
+    leaves calibrated on rare long/expensive (e.g. airport) rows.
+    """
+    mono_set = set(MONOTONIC_INCREASING_FEATURES)
+    return [1 if f in mono_set else 0 for f in feature_names]
+
+
 def cap_rf_max_samples(model: Any, n_samples: int) -> Any:
     """Clamp RandomForest.max_samples so it never exceeds the available rows.
 
@@ -86,6 +101,10 @@ def _fit_lgbm(
 ) -> lgb.LGBMRegressor:
     cat_cols = [c for c in LGBM_CAT_FEATURES if c in X_train.columns]
     lgb_major = int(lgb.__version__.split(".")[0])
+
+    constraints = build_monotone_constraints(list(X_train.columns))
+    if any(constraints):
+        model.set_params(monotone_constraints=constraints)
 
     fit_kwargs: Dict[str, Any] = {
         "categorical_feature": cat_cols,
@@ -148,6 +167,9 @@ def train_model(
         if params:
             xgb_params.update(params)
         xgb_params["early_stopping_rounds"] = EARLY_STOPPING_ROUNDS
+        constraints = build_monotone_constraints(list(X_train.columns))
+        if any(constraints):
+            xgb_params["monotone_constraints"] = tuple(constraints)
         model = xgb.XGBRegressor(**xgb_params)
         model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
         best_iter = getattr(model, "best_iteration", None)
