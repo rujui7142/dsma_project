@@ -94,6 +94,38 @@ SERVICE_ZONE_MAP = {
 }
 
 # ---------------------------------------------------------------------------
+# High-demand "hotspot" zones (domain knowledge from EDA)
+# ---------------------------------------------------------------------------
+# West Village was flagged in the EDA as an especially popular / informative
+# pickup area (weekend + nightlife demand). LocationID 249 = "West Village",
+# 158 = "Meatpacking/West Village West".
+WEST_VILLAGE_ZONES = [249, 158]
+
+# Broader nightlife / high-traffic Manhattan cluster. Used for a coarse
+# is_hotspot flag; the per-zone popularity signal is learned from data
+# (see FeatureEngineer), this list only encodes stable domain priors.
+HOTSPOT_ZONES = [
+    249, 158,              # West Village / Meatpacking
+    113, 114,              # Greenwich Village North / South
+    79, 148,               # East Village, Lower East Side
+    234, 90, 107,          # Union Sq, Flatiron, Gramercy
+    230,                   # Times Sq / Theatre District
+    211, 144,              # SoHo, Little Italy / NoLiTa
+    161, 162, 163, 164,    # Midtown Center / East / North / South
+]
+
+# Number of most-frequent pickup zones to one-hot encode. Learned at fit()
+# time from training-data frequency (unsupervised → no target leakage).
+# Kept small deliberately (lean encoding: trees use ordinal/target encoding;
+# one-hot mainly helps the linear Ridge model).
+N_TOP_ZONES_ONEHOT = 12
+
+# Column-name prefix for the learned top-zone one-hot features
+# (e.g. "pu_top_zone_161"). Kept in config so any code that needs to detect
+# these columns can reference a single source of truth.
+ONEHOT_ZONE_PREFIX = "pu_top_zone_"
+
+# ---------------------------------------------------------------------------
 # Sampling
 # ---------------------------------------------------------------------------
 SAMPLE_CONFIG = {

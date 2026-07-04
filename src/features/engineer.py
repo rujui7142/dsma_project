@@ -19,14 +19,21 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from src.config import RAW_INPUT_COLS, TARGET_COL
+from src.config import (
+    RAW_INPUT_COLS, TARGET_COL, N_TOP_ZONES_ONEHOT, ONEHOT_ZONE_PREFIX,
+)
 from src.features.domain import (
     add_zone_features,
     add_airport_features,
+    add_hotspot_features,
+    add_cbd_crossing,
     add_congestion_surcharge,
     add_cbd_fee,
     add_time_surcharges,
     add_estimated_charges_total,
+    learn_zone_popularity,
+    add_zone_popularity,
+    add_top_zone_onehot,
 )
 
 
@@ -61,12 +68,23 @@ NUMERIC_FEATURES: List[str] = [
     "is_airport_pickup",
     "is_airport_route",
     "airport_fee_est",
+    # --- hotspot / high-demand zones ---
+    "is_west_village_pu",
+    "is_west_village_do",
+    "is_west_village_route",
+    "is_hotspot_pu",
+    "is_hotspot_do",
+    "is_hotspot_route",
+    "pu_zone_popularity",
+    "do_zone_popularity",
     # --- zone type ---
     "is_yellow_zone_pu",
     "is_yellow_zone_do",
     "is_manhattan_pu",
     "is_manhattan_do",
     "is_cross_borough",
+    "crosses_cbd",
+    "fully_within_cbd",
     # --- surcharge estimates ---
     "congestion_surcharge_est",
     "cbd_fee_est",
@@ -78,6 +96,8 @@ NUMERIC_FEATURES: List[str] = [
     # --- interactions ---
     "distance_x_airport",
     "distance_x_rush",
+    "distance_x_manhattan",
+    "distance_x_hotspot",
     # --- target encoding ---
     "pu_zone_mean_fare",
     "do_zone_mean_fare",
@@ -131,6 +151,8 @@ def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["distance_x_airport"] = df["trip_distance"] * df["is_airport_route"]
     df["distance_x_rush"] = df["trip_distance"] * df["is_rush_hour"]
+    df["distance_x_manhattan"] = df["trip_distance"] * df["is_manhattan_do"]
+    df["distance_x_hotspot"] = df["trip_distance"] * df["is_hotspot_route"]
     return df
 
 
@@ -153,6 +175,11 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         self._pu_means: Optional[pd.Series] = None
         self._do_means: Optional[pd.Series] = None
         self._global_mean: float = 0.0
+        # Learned zone-popularity (unsupervised frequency) + top-zone one-hot
+        self._pu_freq: Optional[pd.Series] = None
+        self._do_freq: Optional[pd.Series] = None
+        self._top_pu_zones: List[int] = []
+        self._onehot_cols: List[str] = []
 
     # ------------------------------------------------------------------
 
@@ -170,6 +197,15 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             self._pu_means = tmp.groupby("PULocationID")["_y"].mean()
             self._do_means = tmp.groupby("DOLocationID")["_y"].mean()
             self._global_mean = float(tmp["_y"].mean())
+
+        # Learn zone popularity from training-data frequency only (no target,
+        # so this is leak-free). Unseen zones at transform time map to 0.
+        (
+            self._pu_freq,
+            self._do_freq,
+            self._top_pu_zones,
+            self._onehot_cols,
+        ) = learn_zone_popularity(X, N_TOP_ZONES_ONEHOT, ONEHOT_ZONE_PREFIX)
         return self
 
     # ------------------------------------------------------------------
@@ -183,13 +219,19 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         df = _add_distance_features(df)
         df = add_zone_features(df, self.zones_df)
         df = add_airport_features(df)
+        df = add_hotspot_features(df)
+        df = add_cbd_crossing(df)            # needs is_yellow_zone_* from zone features
         df = add_congestion_surcharge(df)
         df = add_cbd_fee(df)
         df = add_time_surcharges(df)
         df = add_estimated_charges_total(df)
-        df = _add_interaction_features(df)
+        df = _add_interaction_features(df)   # needs hotspot + zone + time features
 
-        # 2. Target encoding (zone-level mean fare)
+        # 2. Learned zone popularity (frequency) + top-zone one-hot
+        df = add_zone_popularity(df, self._pu_freq, self._do_freq)
+        df = add_top_zone_onehot(df, self._top_pu_zones, self._onehot_cols)
+
+        # 3. Target encoding (zone-level mean fare)
         gm = self._global_mean
         if self._pu_means is not None:
             df["pu_zone_mean_fare"] = df["PULocationID"].map(self._pu_means).fillna(gm)
@@ -201,12 +243,16 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         return df
 
     def get_tree_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Select and order columns for tree-based models."""
+        """Select and order columns for tree-based models.
+
+        Includes the learned top-zone one-hot columns (set during fit).
+        """
         cols = [c for c in TREE_FEATURES if c in df.columns]
+        cols += [c for c in self._onehot_cols if c in df.columns]
         return df[cols]
 
     def get_feature_names(self) -> List[str]:
-        return list(TREE_FEATURES)
+        return list(TREE_FEATURES) + list(self._onehot_cols)
 
 
 def get_raw_input_features(df: pd.DataFrame) -> pd.DataFrame:
