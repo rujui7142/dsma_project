@@ -13,7 +13,7 @@ import numpy as np
 
 from src.config import (
     TLC_RULES, BOROUGH_MAP, SERVICE_ZONE_MAP,
-    WEST_VILLAGE_ZONES, HOTSPOT_ZONES,
+    WEST_VILLAGE_ZONES, HOTSPOT_ZONES, METERED_FARE,
 )
 
 _JFK = TLC_RULES["jfk_zone_id"]
@@ -107,6 +107,43 @@ def add_hotspot_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Borough-specific flags (candidate features — Brooklyn / outer boroughs were
+# the weakest error segments, so give the model explicit handles on them).
+# Requires pu_borough / do_borough from add_zone_features.
+# ---------------------------------------------------------------------------
+
+def add_borough_flags(df: pd.DataFrame) -> pd.DataFrame:
+    """Explicit per-borough and outer-borough indicators for PU and DO."""
+    df = df.copy()
+    for side, col in (("pu", "pu_borough"), ("do", "do_borough")):
+        b = df[col]
+        df[f"is_brooklyn_{side}"] = (b == "Brooklyn").astype(np.int8)
+        df[f"is_queens_{side}"] = (b == "Queens").astype(np.int8)
+        df[f"is_bronx_{side}"] = (b == "Bronx").astype(np.int8)
+        # outer borough = not Manhattan and not an airport/EWR pseudo-borough
+        df[f"is_outer_borough_{side}"] = (
+            ~b.isin(["Manhattan", "EWR", "Unknown"])
+        ).astype(np.int8)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Metered-fare skeleton (strong distance-based fare prior)
+# Requires estimated_surcharges from add_estimated_charges_total.
+# ---------------------------------------------------------------------------
+
+def add_metered_fare_estimate(df: pd.DataFrame) -> pd.DataFrame:
+    """Rough metered-fare estimate = base + per_mile*distance + surcharges."""
+    df = df.copy()
+    df["est_metered_fare"] = (
+        METERED_FARE["base"]
+        + METERED_FARE["per_mile"] * df["trip_distance"]
+        + df["estimated_surcharges"]
+    )
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Learned zone popularity (frequency-based, leak-free)
 # ---------------------------------------------------------------------------
 
@@ -154,6 +191,102 @@ def add_top_zone_onehot(
     df = df.copy()
     for z, col in zip(top_zones, onehot_cols):
         df[col] = (df["PULocationID"] == z).astype(np.int8)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Learned (PU, DO) route-level target encoding + route popularity (leak-free:
+# fitted on the training fold only). Route key = PU*1000 + DO (LocationID<266).
+# ---------------------------------------------------------------------------
+
+def _route_key(df: pd.DataFrame) -> pd.Series:
+    return df["PULocationID"] * 1000 + df["DOLocationID"]
+
+
+def learn_route_stats(
+    X: pd.DataFrame, y: pd.Series, smoothing: float
+) -> Tuple[pd.Series, pd.Series, float]:
+    """Smoothed route mean-fare + route frequency. Returns (te, freq, global_mean)."""
+    df = X[["PULocationID", "DOLocationID"]].copy()
+    df["_y"] = y.values if hasattr(y, "values") else y
+    df["_route"] = _route_key(df)
+    grp = df.groupby("_route")["_y"]
+    counts, sums = grp.count(), grp.sum()
+    global_mean = float(df["_y"].mean())
+    route_te = (sums + smoothing * global_mean) / (counts + smoothing)
+    route_freq = counts / counts.sum()
+    return route_te, route_freq, global_mean
+
+
+def add_route_features(
+    df: pd.DataFrame,
+    route_te: Optional[pd.Series],
+    route_freq: Optional[pd.Series],
+    global_mean: float,
+) -> pd.DataFrame:
+    """Map learned route mean-fare + popularity. Unseen routes → global/0."""
+    df = df.copy()
+    if route_te is not None:
+        key = _route_key(df)
+        df["route_mean_fare"] = key.map(route_te).fillna(global_mean)
+        df["route_popularity"] = key.map(route_freq).fillna(0.0)
+    else:
+        df["route_mean_fare"] = global_mean
+        df["route_popularity"] = 0.0
+    return df
+
+
+def learn_zone_fare_std(X: pd.DataFrame, y: pd.Series) -> Tuple[pd.Series, pd.Series]:
+    """Per-zone fare dispersion (std) for PU and DO."""
+    df = X[["PULocationID", "DOLocationID"]].copy()
+    df["_y"] = y.values if hasattr(y, "values") else y
+    return (
+        df.groupby("PULocationID")["_y"].std(),
+        df.groupby("DOLocationID")["_y"].std(),
+    )
+
+
+def add_zone_fare_std(
+    df: pd.DataFrame,
+    pu_std: Optional[pd.Series],
+    do_std: Optional[pd.Series],
+    fill: float = 0.0,
+) -> pd.DataFrame:
+    """Map learned per-zone fare std. Unseen / singleton zones → fill."""
+    df = df.copy()
+    if pu_std is not None:
+        df["pu_zone_std_fare"] = df["PULocationID"].map(pu_std).fillna(fill)
+        df["do_zone_std_fare"] = df["DOLocationID"].map(do_std).fillna(fill)
+    else:
+        df["pu_zone_std_fare"] = fill
+        df["do_zone_std_fare"] = fill
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Unsupervised trip-shape + extra time candidate features
+# ---------------------------------------------------------------------------
+
+def add_trip_shape(df: pd.DataFrame) -> pd.DataFrame:
+    """Distance shape helpers + same-zone flag."""
+    df = df.copy()
+    df["sqrt_distance"] = np.sqrt(df["trip_distance"].clip(lower=0))
+    df["is_short_trip"] = (df["trip_distance"] < 1.0).astype(np.int8)
+    df["is_long_trip"] = (df["trip_distance"] > 10.0).astype(np.int8)
+    df["is_same_zone"] = (df["PULocationID"] == df["DOLocationID"]).astype(np.int8)
+    return df
+
+
+def add_extra_time_flags(df: pd.DataFrame) -> pd.DataFrame:
+    """Finer time-of-day flags + cyclic month encoding."""
+    df = df.copy()
+    hour, dow = df["pickup_hour"], df["pickup_dayofweek"]
+    weekday = dow < 5
+    df["is_late_night"] = ((hour >= 0) & (hour < 5)).astype(np.int8)
+    df["is_morning_rush"] = (weekday & hour.between(7, 9)).astype(np.int8)
+    df["is_evening_rush"] = (weekday & hour.between(16, 19)).astype(np.int8)
+    df["month_sin"] = np.sin(2 * np.pi * df["pickup_month"] / 12)
+    df["month_cos"] = np.cos(2 * np.pi * df["pickup_month"] / 12)
     return df
 
 

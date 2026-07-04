@@ -19,21 +19,31 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
+import src.config as _config
 from src.config import (
     RAW_INPUT_COLS, TARGET_COL, N_TOP_ZONES_ONEHOT, ONEHOT_ZONE_PREFIX,
+    ROUTE_TE_SMOOTHING,
 )
 from src.features.domain import (
     add_zone_features,
     add_airport_features,
     add_hotspot_features,
     add_cbd_crossing,
+    add_borough_flags,
+    add_metered_fare_estimate,
     add_congestion_surcharge,
     add_cbd_fee,
     add_time_surcharges,
     add_estimated_charges_total,
+    add_trip_shape,
+    add_extra_time_flags,
     learn_zone_popularity,
     add_zone_popularity,
     add_top_zone_onehot,
+    learn_route_stats,
+    add_route_features,
+    learn_zone_fare_std,
+    add_zone_fare_std,
 )
 
 
@@ -47,6 +57,10 @@ NUMERIC_FEATURES: List[str] = [
     "trip_distance",
     "log_distance",
     "distance_sq",
+    "sqrt_distance",
+    "is_short_trip",
+    "is_long_trip",
+    "is_same_zone",
     # --- time (raw) ---
     "pickup_hour",
     "pickup_dayofweek",
@@ -56,10 +70,15 @@ NUMERIC_FEATURES: List[str] = [
     "hour_cos",
     "dow_sin",
     "dow_cos",
+    "month_sin",
+    "month_cos",
     # --- time (binary) ---
     "is_weekend",
     "is_rush_hour",
     "is_overnight",
+    "is_late_night",
+    "is_morning_rush",
+    "is_evening_rush",
     # --- airport ---
     "is_jfk_pu",
     "is_lga_pu",
@@ -77,6 +96,7 @@ NUMERIC_FEATURES: List[str] = [
     "is_hotspot_route",
     "pu_zone_popularity",
     "do_zone_popularity",
+    "route_popularity",
     # --- zone type ---
     "is_yellow_zone_pu",
     "is_yellow_zone_do",
@@ -85,6 +105,15 @@ NUMERIC_FEATURES: List[str] = [
     "is_cross_borough",
     "crosses_cbd",
     "fully_within_cbd",
+    # --- borough-specific (weak-segment handles) ---
+    "is_brooklyn_pu",
+    "is_brooklyn_do",
+    "is_queens_pu",
+    "is_queens_do",
+    "is_bronx_pu",
+    "is_bronx_do",
+    "is_outer_borough_pu",
+    "is_outer_borough_do",
     # --- surcharge estimates ---
     "congestion_surcharge_est",
     "cbd_fee_est",
@@ -93,14 +122,22 @@ NUMERIC_FEATURES: List[str] = [
     "mta_tax_est",
     "improvement_surcharge_est",
     "estimated_surcharges",
+    "est_metered_fare",
     # --- interactions ---
     "distance_x_airport",
     "distance_x_rush",
     "distance_x_manhattan",
     "distance_x_hotspot",
+    "distance_x_cross_borough",
+    "distance_x_post_cbd",
+    "distance_x_cbd_cross",
+    "hour_x_distance",
     # --- target encoding ---
     "pu_zone_mean_fare",
     "do_zone_mean_fare",
+    "pu_zone_std_fare",
+    "do_zone_std_fare",
+    "route_mean_fare",
     # --- encoded booleans from zone lookup ---
     "pu_borough_enc",
     "do_borough_enc",
@@ -153,6 +190,10 @@ def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     df["distance_x_rush"] = df["trip_distance"] * df["is_rush_hour"]
     df["distance_x_manhattan"] = df["trip_distance"] * df["is_manhattan_do"]
     df["distance_x_hotspot"] = df["trip_distance"] * df["is_hotspot_route"]
+    df["distance_x_cross_borough"] = df["trip_distance"] * df["is_cross_borough"]
+    df["distance_x_post_cbd"] = df["trip_distance"] * df["is_post_cbd"]
+    df["distance_x_cbd_cross"] = df["trip_distance"] * df["crosses_cbd"]
+    df["hour_x_distance"] = df["pickup_hour"] * df["trip_distance"]
     return df
 
 
@@ -180,16 +221,21 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         self._do_freq: Optional[pd.Series] = None
         self._top_pu_zones: List[int] = []
         self._onehot_cols: List[str] = []
+        # Learned route-level target encoding + zone fare dispersion
+        self._route_te: Optional[pd.Series] = None
+        self._route_freq: Optional[pd.Series] = None
+        self._pu_std: Optional[pd.Series] = None
+        self._do_std: Optional[pd.Series] = None
 
     # ------------------------------------------------------------------
 
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "FeatureEngineer":
-        """Fit target encoding on training data.
+        """Fit all supervised encodings on the training fold (leak-free).
 
         Parameters
         ----------
         X : raw input DataFrame (must contain PULocationID, DOLocationID).
-        y : training target (total_fare_amount). If None, encoding defaults to 0.
+        y : training target (total_fare_amount). If None, encodings default to 0.
         """
         if y is not None:
             tmp = X[["PULocationID", "DOLocationID"]].copy()
@@ -197,6 +243,11 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             self._pu_means = tmp.groupby("PULocationID")["_y"].mean()
             self._do_means = tmp.groupby("DOLocationID")["_y"].mean()
             self._global_mean = float(tmp["_y"].mean())
+            # route-level (PU,DO) smoothed target encoding + zone fare std
+            self._route_te, self._route_freq, self._global_mean = learn_route_stats(
+                X, y, ROUTE_TE_SMOOTHING
+            )
+            self._pu_std, self._do_std = learn_zone_fare_std(X, y)
 
         # Learn zone popularity from training-data frequency only (no target,
         # so this is leak-free). Unseen zones at transform time map to 0.
@@ -217,18 +268,24 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         # 1. Unsupervised transforms
         df = _add_cyclic_time(df)
         df = _add_distance_features(df)
+        df = add_trip_shape(df)
+        df = add_extra_time_flags(df)
         df = add_zone_features(df, self.zones_df)
+        df = add_borough_flags(df)           # needs pu_borough / do_borough
         df = add_airport_features(df)
         df = add_hotspot_features(df)
         df = add_cbd_crossing(df)            # needs is_yellow_zone_* from zone features
         df = add_congestion_surcharge(df)
-        df = add_cbd_fee(df)
+        df = add_cbd_fee(df)                 # sets is_post_cbd
         df = add_time_surcharges(df)
         df = add_estimated_charges_total(df)
-        df = _add_interaction_features(df)   # needs hotspot + zone + time features
+        df = add_metered_fare_estimate(df)   # needs estimated_surcharges
+        df = _add_interaction_features(df)   # needs zone/time/cbd flags
 
-        # 2. Learned zone popularity (frequency) + top-zone one-hot
+        # 2. Learned zone popularity + route stats + zone fare std + one-hot
         df = add_zone_popularity(df, self._pu_freq, self._do_freq)
+        df = add_route_features(df, self._route_te, self._route_freq, self._global_mean)
+        df = add_zone_fare_std(df, self._pu_std, self._do_std)
         df = add_top_zone_onehot(df, self._top_pu_zones, self._onehot_cols)
 
         # 3. Target encoding (zone-level mean fare)
@@ -245,14 +302,21 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
     def get_tree_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Select and order columns for tree-based models.
 
-        Includes the learned top-zone one-hot columns (set during fit).
+        Includes the learned top-zone one-hot columns (set during fit). If
+        config.SELECTED_FEATURES is set (by select_features.py), the output is
+        restricted to that learned "most predictive" subset.
         """
-        cols = [c for c in TREE_FEATURES if c in df.columns]
-        cols += [c for c in self._onehot_cols if c in df.columns]
+        cols = self.get_feature_names()
+        cols = [c for c in cols if c in df.columns]
         return df[cols]
 
     def get_feature_names(self) -> List[str]:
-        return list(TREE_FEATURES) + list(self._onehot_cols)
+        """Full candidate feature list, or the selected subset when configured."""
+        all_feats = list(TREE_FEATURES) + list(self._onehot_cols)
+        selected = getattr(_config, "SELECTED_FEATURES", None)
+        if selected:
+            return [c for c in all_feats if c in selected]
+        return all_feats
 
 
 def get_raw_input_features(df: pd.DataFrame) -> pd.DataFrame:

@@ -126,6 +126,30 @@ N_TOP_ZONES_ONEHOT = 12
 ONEHOT_ZONE_PREFIX = "pu_top_zone_"
 
 # ---------------------------------------------------------------------------
+# Metered-fare skeleton (rough NYC yellow-cab meter, used as an engineered
+# candidate feature — a strong distance-based fare prior).
+# Source: TLC standard metered rate (initial charge + per-mile).
+# ---------------------------------------------------------------------------
+METERED_FARE = {
+    "base": 3.00,       # initial charge
+    "per_mile": 3.50,   # ~ $0.70 per 1/5 mile
+}
+
+# Smoothing weight for learned (PU, DO) route-level target encoding:
+# route_mean = (sum_fare + m * global_mean) / (count + m). Higher m = more
+# shrinkage toward the global mean for rare routes.
+ROUTE_TE_SMOOTHING = 20.0
+
+# ---------------------------------------------------------------------------
+# Feature selection (step 3): the wide candidate net is always computed, but
+# training can be restricted to a learned "most predictive" subset chosen by
+# select_features.py (forward-chaining CV). When SELECTED_FEATURES is None the
+# full set is used; otherwise get_tree_features() filters to this list.
+# Populate it from logs/selected_features_*.json after running select_features.py.
+# ---------------------------------------------------------------------------
+SELECTED_FEATURES = None
+
+# ---------------------------------------------------------------------------
 # Sampling
 # ---------------------------------------------------------------------------
 SAMPLE_CONFIG = {
