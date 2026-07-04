@@ -21,10 +21,10 @@ def _simple_fit(model_name: str, X: pd.DataFrame, y: pd.Series, sample_weight=No
     For the boosted models we early-stop against a chronological tail of the
     combined data (the most-recent rows — which is exactly the period we want
     the retrained model to generalise to). Without this the retrain runs the
-    full 1000 boosting rounds and overfits, so mitigation can end up *worse*
+    full n_estimators ceiling and overfits, so mitigation can end up *worse*
     than the frozen model.
     """
-    from src.models.trainer import get_model, cap_rf_max_samples
+    from src.models.trainer import get_model, cap_rf_max_samples, EARLY_STOPPING_ROUNDS
     import lightgbm as lgb
     import xgboost as xgb
 
@@ -50,14 +50,14 @@ def _simple_fit(model_name: str, X: pd.DataFrame, y: pd.Series, sample_weight=No
         if use_es:
             fit_kw["eval_set"] = [(X_val, y_val)]
             fit_kw["callbacks"] = [
-                lgb.early_stopping(50, verbose=False),
+                lgb.early_stopping(EARLY_STOPPING_ROUNDS, verbose=False),
                 lgb.log_evaluation(0),
             ]
         model.fit(X_tr, y_tr, **fit_kw)
 
     elif isinstance(model, xgb.XGBRegressor):
         if use_es:
-            model.set_params(early_stopping_rounds=50)
+            model.set_params(early_stopping_rounds=EARLY_STOPPING_ROUNDS)
             model.fit(X_tr, y_tr, sample_weight=w_tr,
                       eval_set=[(X_val, y_val)], verbose=False)
         else:

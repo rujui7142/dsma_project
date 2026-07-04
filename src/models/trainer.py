@@ -74,6 +74,9 @@ def cap_rf_max_samples(model: Any, n_samples: int) -> Any:
 # LightGBM fit helper (handles v2.x vs v3+ API difference)
 # ---------------------------------------------------------------------------
 
+EARLY_STOPPING_ROUNDS = 100  # patience; n_estimators in config is just the ceiling
+
+
 def _fit_lgbm(
     model: lgb.LGBMRegressor,
     X_train: pd.DataFrame,
@@ -91,14 +94,17 @@ def _fit_lgbm(
 
     if lgb_major >= 3:
         fit_kwargs["callbacks"] = [
-            lgb.early_stopping(stopping_rounds=50, verbose=False),
+            lgb.early_stopping(stopping_rounds=EARLY_STOPPING_ROUNDS, verbose=False),
             lgb.log_evaluation(period=100),
         ]
     else:
-        fit_kwargs["early_stopping_rounds"] = 50
+        fit_kwargs["early_stopping_rounds"] = EARLY_STOPPING_ROUNDS
         fit_kwargs["verbose"] = 100
 
     model.fit(X_train, y_train, **fit_kwargs)
+    best_iter = getattr(model, "best_iteration_", None)
+    ceiling = model.get_params().get("n_estimators")
+    print(f"  early stopping -> best_iteration={best_iter} (ceiling={ceiling})")
     return model
 
 
@@ -141,9 +147,11 @@ def train_model(
         xgb_params = MODEL_DEFAULTS["xgb"].copy()
         if params:
             xgb_params.update(params)
-        xgb_params["early_stopping_rounds"] = 50
+        xgb_params["early_stopping_rounds"] = EARLY_STOPPING_ROUNDS
         model = xgb.XGBRegressor(**xgb_params)
         model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
+        best_iter = getattr(model, "best_iteration", None)
+        print(f"  early stopping -> best_iteration={best_iter} (ceiling={xgb_params['n_estimators']})")
 
     elif model_name == "rf":
         cap_rf_max_samples(model, len(X_train))

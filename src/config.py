@@ -182,7 +182,11 @@ WANDB_ENTITY = None  # defaults to logged-in W&B user
 # ---------------------------------------------------------------------------
 MODEL_DEFAULTS = {
     "lgbm": {
-        "n_estimators": 1000,
+        # n_estimators is a ceiling, not a target: early stopping (see
+        # trainer._fit_lgbm) determines the actual number of trees from
+        # validation performance. Set high so the cap is never the binding
+        # constraint — 1000 was truncating convergence on the full feature set.
+        "n_estimators": 3000,
         "learning_rate": 0.05,
         "num_leaves": 127,
         "max_depth": -1,
@@ -196,7 +200,8 @@ MODEL_DEFAULTS = {
         "verbose": -1,
     },
     "xgb": {
-        "n_estimators": 1000,
+        # Same rationale as lgbm above — ceiling, early stopping picks the count.
+        "n_estimators": 3000,
         "learning_rate": 0.05,
         "max_depth": 7,
         "subsample": 0.8,
