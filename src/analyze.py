@@ -39,7 +39,7 @@ from src.models.shap_analysis import (
 )
 from src.drift.detector import detect_feature_drift, plot_feature_drift_over_folds
 from src.tracking.wandb_tracker import ExperimentTracker
-from train import forward_chain_splits
+from src.train import forward_chain_splits
 
 
 _ALL_MODELS = ("lgbm", "xgb", "rf", "ridge")

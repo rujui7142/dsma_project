@@ -146,16 +146,19 @@ ROUTE_TE_SMOOTHING = 20.0
 # select_features.py (forward-chaining CV). When SELECTED_FEATURES is None the
 # full ~92-feature set is used; otherwise get_tree_features() filters to this list.
 #
-# Below: top-16 by TreeSHAP (LightGBM champion). Forward-chaining CV RMSE of the
-# 16-feature set (6.67) beat the full 92-feature set (6.92) by ~3.6% — the extra
-# features were noise for the tree model. Regenerate with select_features.py.
-# Set to None to fall back to the full candidate net (e.g. for the linear model).
+# Below: top-12 by TreeSHAP (LightGBM champion) over the 98-candidate net.
+# Forward-chaining CV RMSE of the 12-feature set (6.72) beat the full 98-feature
+# set (6.95) by ~3.3% — extra features are noise for the tree. Notably the
+# segment-targeted interactions (overnight_x_distance, enters/exits_cbd, etc.)
+# were REJECTED here: GBMs model those interactions internally via splits, so the
+# residual error on CBD-crossing / night / long trips is largely irreducible from
+# booking-time inputs (trip duration is unavailable at booking).
+# Regenerate with `python -m src.select_features`. None = full net (for Ridge).
 # ---------------------------------------------------------------------------
 SELECTED_FEATURES = [
     "est_metered_fare", "trip_distance", "route_mean_fare", "log_distance",
     "DOLocationID", "PULocationID", "hour_cos", "distance_x_cross_borough",
-    "hour_x_distance", "distance_x_airport", "route_popularity", "dow_sin",
-    "distance_sq", "distance_x_manhattan", "pickup_month", "distance_x_rush",
+    "hour_x_distance", "route_popularity", "distance_x_airport", "dow_sin",
 ]
 
 # ---------------------------------------------------------------------------

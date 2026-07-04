@@ -105,6 +105,8 @@ NUMERIC_FEATURES: List[str] = [
     "is_cross_borough",
     "crosses_cbd",
     "fully_within_cbd",
+    "enters_cbd",
+    "exits_cbd",
     # --- borough-specific (weak-segment handles) ---
     "is_brooklyn_pu",
     "is_brooklyn_do",
@@ -132,6 +134,10 @@ NUMERIC_FEATURES: List[str] = [
     "distance_x_post_cbd",
     "distance_x_cbd_cross",
     "hour_x_distance",
+    "cbd_active_cross",
+    "overnight_x_distance",
+    "night_x_airport",
+    "longtrip_x_airport",
     # --- target encoding ---
     "pu_zone_mean_fare",
     "do_zone_mean_fare",
@@ -194,6 +200,12 @@ def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     df["distance_x_post_cbd"] = df["trip_distance"] * df["is_post_cbd"]
     df["distance_x_cbd_cross"] = df["trip_distance"] * df["crosses_cbd"]
     df["hour_x_distance"] = df["pickup_hour"] * df["trip_distance"]
+    # Targeted at the highest-error segments (CV error analysis):
+    #   crosses_cbd=1, nighttime, and long trips.
+    df["cbd_active_cross"] = df["crosses_cbd"] * df["is_post_cbd"]   # $9 fee only post-2025
+    df["overnight_x_distance"] = df["is_overnight"] * df["trip_distance"]
+    df["night_x_airport"] = df["is_overnight"] * df["is_airport_route"]
+    df["longtrip_x_airport"] = df["is_long_trip"] * df["is_airport_route"]
     return df
 
 

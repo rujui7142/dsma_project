@@ -39,7 +39,7 @@ from src.models.shap_analysis import (
     shap_importance, shap_importance_over_folds, plot_shap_bar,
 )
 from src.tracking.wandb_tracker import ExperimentTracker
-from train import forward_chain_splits
+from src.train import forward_chain_splits
 
 _ALL_MODELS = ("lgbm", "xgb", "rf", "ridge")
 OUTPUTS_PLOTS = Path("outputs/plots")
@@ -75,6 +75,11 @@ def _cv_rmse(folds, model_name, cols):
 def main():
     args = parse_args()
     OUTPUTS_PLOTS.mkdir(parents=True, exist_ok=True)
+
+    # Selection must evaluate the FULL candidate net, regardless of any subset
+    # currently pinned in config.SELECTED_FEATURES.
+    import src.config as _cfg
+    _cfg.SELECTED_FEATURES = None
 
     print("\n=== Loading training data (train/val only) ===")
     raw_df = load_parquet_files(

@@ -308,6 +308,10 @@ def add_cbd_crossing(df: pd.DataFrame) -> pd.DataFrame:
     do_in = df["is_yellow_zone_do"].astype(bool)
     df["crosses_cbd"] = (pu_in ^ do_in).astype(np.int8)
     df["fully_within_cbd"] = (pu_in & do_in).astype(np.int8)
+    # Directional crossing — entering vs leaving the CBD priced differently
+    # (crosses_cbd=1 was the highest-error / highest-variance segment).
+    df["enters_cbd"] = ((~pu_in) & do_in).astype(np.int8)
+    df["exits_cbd"] = (pu_in & (~do_in)).astype(np.int8)
     return df
 
 
