@@ -1,5 +1,6 @@
 """Model evaluation: metrics, error analysis, and feature importance."""
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -65,8 +66,13 @@ def error_analysis(
         labels=["0-1mi", "1-3mi", "3-5mi", "5-10mi", "10-20mi", "20+mi"],
     )
 
+    segment_cols = [
+        "pu_borough", "pickup_hour", "distance_bin", "pickup_dayofweek",
+        "is_airport_route", "is_hotspot_route", "is_west_village_route",
+        "crosses_cbd", "fully_within_cbd",
+    ]
     analyses = {}
-    for col in ["pu_borough", "pickup_hour", "distance_bin", "is_airport_route", "pickup_dayofweek"]:
+    for col in segment_cols:
         if col in meta.columns:
             try:
                 analyses[col] = evaluate_by_segment(y_t, y_pred, meta, col)
@@ -74,6 +80,107 @@ def error_analysis(
                 pass
 
     return analyses
+
+
+# ---------------------------------------------------------------------------
+# Cross-validation error aggregation (across forward-chaining folds)
+# ---------------------------------------------------------------------------
+
+def aggregate_segment_errors(
+    fold_segment_dfs: List[pd.DataFrame],
+    segment_col: str,
+) -> pd.DataFrame:
+    """Aggregate per-fold evaluate_by_segment() outputs into mean/std per segment.
+
+    Parameters
+    ----------
+    fold_segment_dfs : list of DataFrames (one per fold) from evaluate_by_segment,
+                       each containing the segment_col plus rmse / mae / count.
+
+    Returns
+    -------
+    One row per segment value with rmse/mae mean & std across folds, sorted by
+    mae_mean descending (worst segments first — these drive feature ideas).
+    """
+    valid = [d for d in fold_segment_dfs if d is not None and not d.empty]
+    if not valid:
+        return pd.DataFrame()
+
+    combined = pd.concat(valid, ignore_index=True)
+    agg = (
+        combined.groupby(segment_col)
+        .agg(
+            rmse_mean=("rmse", "mean"),
+            rmse_std=("rmse", "std"),
+            mae_mean=("mae", "mean"),
+            mae_std=("mae", "std"),
+            avg_count=("count", "mean"),
+            n_folds=("rmse", "size"),
+        )
+        .reset_index()
+        .fillna({"rmse_std": 0.0, "mae_std": 0.0})
+    )
+    return agg.sort_values("mae_mean", ascending=False).reset_index(drop=True)
+
+
+def plot_segment_error(
+    agg_df: pd.DataFrame,
+    segment_col: str,
+    output_dir: str = "outputs/plots",
+    filename: Optional[str] = None,
+    title: Optional[str] = None,
+) -> Any:
+    """Bar chart of mean MAE per segment (error bars = std across folds)."""
+    import matplotlib.pyplot as plt
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    if agg_df.empty:
+        return None
+
+    labels = agg_df[segment_col].astype(str).tolist()
+    fig, ax = plt.subplots(figsize=(max(7, 0.6 * len(labels)), 4.5))
+    ax.bar(labels, agg_df["mae_mean"], yerr=agg_df["mae_std"],
+           capsize=3, color="#e15759", alpha=0.85)
+    ax.set_xlabel(segment_col)
+    ax.set_ylabel("MAE ($)  mean ± std across folds")
+    ax.set_title(title or f"CV error analysis by {segment_col}")
+    plt.xticks(rotation=30, ha="right")
+    plt.tight_layout()
+
+    fname = filename or f"cv_error_by_{segment_col}.png"
+    out = Path(output_dir) / fname
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    print(f"  Segment-error chart saved -> {out}")
+    return fig
+
+
+def plot_metric_over_folds(
+    per_model_metric: Dict[str, List[float]],
+    fold_labels: List[Any],
+    metric_name: str = "MAE",
+    output_dir: str = "outputs/plots",
+    filename: str = "metric_over_folds.png",
+    title: Optional[str] = None,
+) -> Any:
+    """Line chart of a metric per fold, one line per model (performance drift)."""
+    import matplotlib.pyplot as plt
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    x = [str(f) for f in fold_labels]
+
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    for model_name, values in per_model_metric.items():
+        ax.plot(x, values, marker="o", linewidth=2, label=model_name)
+    ax.set_xlabel("Forward-chaining fold (time →)")
+    ax.set_ylabel(f"{metric_name} ($)")
+    ax.set_title(title or f"{metric_name} over forward-chaining folds")
+    ax.legend()
+    plt.tight_layout()
+
+    out = Path(output_dir) / filename
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    print(f"  {metric_name}-over-folds chart saved -> {out}")
+    return fig
 
 
 # ---------------------------------------------------------------------------

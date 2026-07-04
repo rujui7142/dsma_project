@@ -57,6 +57,19 @@ def get_model(model_name: str, params: Optional[Dict[str, Any]] = None) -> Any:
     raise ValueError(f"Unknown model_name: {model_name!r}")
 
 
+def cap_rf_max_samples(model: Any, n_samples: int) -> Any:
+    """Clamp RandomForest.max_samples so it never exceeds the available rows.
+
+    sklearn raises if max_samples > n_samples. This happens whenever a fold /
+    mitigation pool is smaller than the configured bootstrap cap (e.g. in CI or
+    on the initial walk-forward window). No-op for non-RF models.
+    """
+    ms = model.get_params().get("max_samples") if hasattr(model, "get_params") else None
+    if ms is not None and ms > n_samples:
+        model.set_params(max_samples=None)
+    return model
+
+
 # ---------------------------------------------------------------------------
 # LightGBM fit helper (handles v2.x vs v3+ API difference)
 # ---------------------------------------------------------------------------
@@ -133,9 +146,7 @@ def train_model(
         model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
 
     elif model_name == "rf":
-        ms = model.get_params().get("max_samples")
-        if ms is not None and ms > len(X_train):
-            model.set_params(max_samples=None)
+        cap_rf_max_samples(model, len(X_train))
         model.fit(X_train, y_train)
 
     elif model_name == "ridge":

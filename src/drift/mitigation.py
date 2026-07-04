@@ -16,24 +16,55 @@ RECENT_WEIGHT = 3.0
 
 
 def _simple_fit(model_name: str, X: pd.DataFrame, y: pd.Series, sample_weight=None) -> Any:
-    """Fit a model without early stopping (for retraining on combined data)."""
-    from src.models.trainer import get_model
+    """Fit a model on combined old+recent data for retraining.
+
+    For the boosted models we early-stop against a chronological tail of the
+    combined data (the most-recent rows — which is exactly the period we want
+    the retrained model to generalise to). Without this the retrain runs the
+    full 1000 boosting rounds and overfits, so mitigation can end up *worse*
+    than the frozen model.
+    """
+    from src.models.trainer import get_model, cap_rf_max_samples
     import lightgbm as lgb
     import xgboost as xgb
 
     model = get_model(model_name)
 
+    # Chronological tail validation split (combined data is old rows followed by
+    # recent rows, so the tail is the freshest period).
+    n = len(X)
+    use_es = n > 1000
+    if use_es:
+        n_val = max(200, int(n * 0.15))
+        X_tr, X_val = X.iloc[:-n_val], X.iloc[-n_val:]
+        y_tr, y_val = y.iloc[:-n_val], y.iloc[-n_val:]
+        w_tr = sample_weight[:-n_val] if sample_weight is not None else None
+    else:
+        X_tr, y_tr, w_tr = X, y, sample_weight
+
     if isinstance(model, lgb.LGBMRegressor):
         cat_cols = [c for c in ["PULocationID", "DOLocationID"] if c in X.columns]
         fit_kw: Dict[str, Any] = {"categorical_feature": cat_cols or "auto"}
-        if sample_weight is not None:
-            fit_kw["sample_weight"] = sample_weight
-        model.fit(X, y, **fit_kw)
+        if w_tr is not None:
+            fit_kw["sample_weight"] = w_tr
+        if use_es:
+            fit_kw["eval_set"] = [(X_val, y_val)]
+            fit_kw["callbacks"] = [
+                lgb.early_stopping(50, verbose=False),
+                lgb.log_evaluation(0),
+            ]
+        model.fit(X_tr, y_tr, **fit_kw)
 
     elif isinstance(model, xgb.XGBRegressor):
-        model.fit(X, y, sample_weight=sample_weight)
+        if use_es:
+            model.set_params(early_stopping_rounds=50)
+            model.fit(X_tr, y_tr, sample_weight=w_tr,
+                      eval_set=[(X_val, y_val)], verbose=False)
+        else:
+            model.fit(X_tr, y_tr, sample_weight=w_tr)
 
     else:
+        cap_rf_max_samples(model, len(X))  # no-op for Ridge; guards RandomForest
         kw = {"sample_weight": sample_weight} if sample_weight is not None else {}
         model.fit(X, y, **kw)
 

@@ -22,6 +22,9 @@ test_set/
 # Logs output
 logs/
 
+# Generated analysis plots (regenerated; logged to W&B)
+outputs/
+
 # Env
 .env
 *.env

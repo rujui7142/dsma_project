@@ -311,6 +311,48 @@ def plot_monthly_mae_curve(
     return fig
 
 
+def plot_feature_drift_over_folds(
+    drift_long: pd.DataFrame,
+    top_n: int = 8,
+    output_dir: str = "outputs/plots",
+    filename: str = "feature_drift_over_folds.png",
+) -> Any:
+    """Line chart of per-feature PSI across forward-chaining folds.
+
+    Parameters
+    ----------
+    drift_long : tidy DataFrame with columns [fold, feature, psi].
+    top_n      : number of most-drifting features (by peak PSI) to show.
+    """
+    import matplotlib.pyplot as plt
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    if drift_long.empty:
+        return None
+
+    peak = drift_long.groupby("feature")["psi"].max().sort_values(ascending=False)
+    top_features = list(peak.head(top_n).index)
+    folds = sorted(drift_long["fold"].unique())
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for feature in top_features:
+        sub = drift_long[drift_long["feature"] == feature].set_index("fold").reindex(folds)
+        ax.plot([str(f) for f in folds], sub["psi"], marker="o", linewidth=2, label=feature)
+
+    ax.axhline(0.10, linestyle="--", color="grey", alpha=0.7, label="moderate (0.10)")
+    ax.axhline(0.25, linestyle="--", color="red", alpha=0.7, label="significant (0.25)")
+    ax.set_xlabel("Forward-chaining fold (time →)")
+    ax.set_ylabel("PSI")
+    ax.set_title("Feature drift over time (PSI per fold)")
+    ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+    plt.tight_layout()
+
+    out = Path(output_dir) / filename
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    print(f"  Feature-drift-over-folds chart saved -> {out}")
+    return fig
+
+
 def plot_label_drift_distribution(
     reference_df: pd.DataFrame,
     current_df: pd.DataFrame,
