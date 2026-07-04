@@ -142,12 +142,21 @@ ROUTE_TE_SMOOTHING = 20.0
 
 # ---------------------------------------------------------------------------
 # Feature selection (step 3): the wide candidate net is always computed, but
-# training can be restricted to a learned "most predictive" subset chosen by
+# training is restricted to the learned "most predictive" subset chosen by
 # select_features.py (forward-chaining CV). When SELECTED_FEATURES is None the
-# full set is used; otherwise get_tree_features() filters to this list.
-# Populate it from logs/selected_features_*.json after running select_features.py.
+# full ~92-feature set is used; otherwise get_tree_features() filters to this list.
+#
+# Below: top-16 by TreeSHAP (LightGBM champion). Forward-chaining CV RMSE of the
+# 16-feature set (6.67) beat the full 92-feature set (6.92) by ~3.6% — the extra
+# features were noise for the tree model. Regenerate with select_features.py.
+# Set to None to fall back to the full candidate net (e.g. for the linear model).
 # ---------------------------------------------------------------------------
-SELECTED_FEATURES = None
+SELECTED_FEATURES = [
+    "est_metered_fare", "trip_distance", "route_mean_fare", "log_distance",
+    "DOLocationID", "PULocationID", "hour_cos", "distance_x_cross_borough",
+    "hour_x_distance", "distance_x_airport", "route_popularity", "dow_sin",
+    "distance_sq", "distance_x_manhattan", "pickup_month", "distance_x_rush",
+]
 
 # ---------------------------------------------------------------------------
 # Sampling
