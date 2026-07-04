@@ -14,12 +14,14 @@ from pathlib import Path
 
 TLC_BASE = "https://d37ci6vzurychx.cloudfront.net/trip-data"
 
-# Months to download for training_set/ — spread across 2024-2025 to give the
-# temporal CV folds enough coverage, plus the Nov-Dec 2025 val split months.
+# Months to download for training_set/ — every month of 2024+2025 so the
+# forward-chaining CV folds have maximum data density (a quarterly subset was
+# previously used for CI speed, but that starved the CV of data points versus
+# local runs which use the full 22 months).
 TRAINING_MONTHS = [
-    ("2024", "01"), ("2024", "04"), ("2024", "07"), ("2024", "10"),
-    ("2025", "01"), ("2025", "04"), ("2025", "07"), ("2025", "10"),
-    ("2025", "11"), ("2025", "12"),
+    (str(yr), f"{mo:02d}")
+    for yr in (2024, 2025)
+    for mo in range(1, 13)
 ]
 
 # 2026 test set — may not be available yet; failures are non-fatal.

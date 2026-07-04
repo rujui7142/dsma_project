@@ -17,7 +17,7 @@ on:
 jobs:
   train-and-evaluate:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120  # bumped: training_set now downloads all 24 months (2024+2025), not a quarterly subset
 
     env:
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
