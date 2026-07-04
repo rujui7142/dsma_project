@@ -1,11 +1,22 @@
 """Weights & Biases hyperparameter sweep for all model types.
 
+Two-phase protocol (per lecture 3 best practice: random search for cheap
+stochastic exploration, then Bayesian optimization "informed" by that
+exploration's best region — not started cold):
+
+  Phase 1 — RANDOM   : count_random trials over the full parameter space.
+  Phase 2 — BAYESIAN : count_bayes  trials over a NARROWED space, centered on
+                        phase 1's best result (read back via the W&B API).
+
+Every model (lgbm, xgb, rf, ridge) goes through both phases; ridge's alpha is
+a continuous log-uniform range (not a fixed grid) so it benefits the same way.
+
 Run:
-    python sweep.py --model lgbm   [--count 20]  [--sample 50000] [--tag SWEEP_TAG]
-    python sweep.py --model xgb
-    python sweep.py --model rf
-    python sweep.py --model ridge
-    python sweep.py --model all    # runs sweeps for all four sequentially
+    python -m src.sweep --model lgbm   [--count-random 10] [--count-bayes 10]
+    python -m src.sweep --model xgb
+    python -m src.sweep --model rf
+    python -m src.sweep --model ridge
+    python -m src.sweep --model all    # runs both phases for all four sequentially
 
 Each agent run:
   1. Shares a pre-loaded feature-engineered train/val split (built once)
@@ -17,8 +28,10 @@ copy them into src/config.py MODEL_DEFAULTS and re-run train.py.
 """
 
 import argparse
+import copy
+import math
 import sys
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import pandas as pd
 
@@ -50,6 +63,12 @@ _SWEEP_CONFIGS = {
     "ridge": RIDGE_SWEEP_CONFIG,
 }
 
+# How much of the original range the Bayesian phase's narrowed window keeps,
+# as a fraction of the full [min, max] width, centered on phase 1's best value.
+# 0.4 = a window 40% as wide as the original, clipped back to the original
+# bounds so phase 2 can't wander outside what was ever a valid value.
+NARROW_WINDOW_FRAC = 0.4
+
 # Module-level globals shared across all sweep agent calls
 _X_TRAIN: Optional[pd.DataFrame] = None
 _X_VAL: Optional[pd.DataFrame] = None
@@ -66,7 +85,10 @@ def parse_args():
         choices=["lgbm", "xgb", "rf", "ridge", "all"],
         help="Model to sweep, or 'all' to run all four sequentially",
     )
-    p.add_argument("--count", type=int, default=20, help="Trials per model")
+    p.add_argument("--count-random", type=int, default=10,
+                    help="Phase 1 (random search) trial count")
+    p.add_argument("--count-bayes", type=int, default=10,
+                    help="Phase 2 (Bayesian, narrowed around phase-1 best) trial count")
     p.add_argument("--sample", type=int, default=50_000, help="Rows per month for sweep data")
     p.add_argument("--tag", type=str, default="sweep")
     return p.parse_args()
@@ -97,15 +119,100 @@ def _sweep_agent_fn():
         })
 
 
-def _run_sweep(tracker: WandbTracker, model_name: str, count: int, tag: str) -> None:
+def _best_run_config(tracker: WandbTracker, sweep_id: str) -> Optional[Dict[str, Any]]:
+    """Read back the best trial's hyperparameters from a completed sweep."""
+    try:
+        api = wandb.Api()
+        path = f"{tracker.entity}/{tracker.project}/{sweep_id}" if tracker.entity \
+            else f"{tracker.project}/{sweep_id}"
+        sweep = api.sweep(path)
+        runs = [r for r in sweep.runs if r.summary.get("val_rmse") is not None]
+        if not runs:
+            return None
+        best = min(runs, key=lambda r: r.summary["val_rmse"])
+        print(f"  Phase-1 best: val_rmse={best.summary['val_rmse']:.4f}  config={dict(best.config)}")
+        return dict(best.config)
+    except Exception as exc:
+        print(f"  WARNING: could not read back phase-1 best run ({exc}); "
+              f"phase 2 will use the full (un-narrowed) search space.")
+        return None
+
+
+def _narrow_param_space(
+    parameters: Dict[str, Any],
+    best_config: Optional[Dict[str, Any]],
+    window_frac: float = NARROW_WINDOW_FRAC,
+) -> Dict[str, Any]:
+    """Center a tighter search window on phase-1's best value for each
+    continuous (min/max) parameter, clipped to the original bounds.
+
+    Discrete parameters (a fixed "values" list) are left unchanged — Bayesian
+    search already re-weights categorical choices using trial history, and
+    arbitrarily dropping options risks excluding the true optimum after only
+    a handful of random-search samples.
+    """
+    if not best_config:
+        return copy.deepcopy(parameters)
+
+    narrowed = copy.deepcopy(parameters)
+    for name, spec in narrowed.items():
+        if "min" not in spec or "max" not in spec or name not in best_config:
+            continue  # discrete "values" param, or not swept -> leave as-is
+
+        lo, hi = spec["min"], spec["max"]
+        best = best_config[name]
+        is_log = spec.get("distribution") == "log_uniform_values"
+
+        if is_log:
+            # Narrow in LOG space — a linear window around `best` on a range
+            # spanning multiple orders of magnitude (e.g. ridge alpha:
+            # 0.001-1000) is wildly asymmetric and barely narrows the upper
+            # bound at all. Guard against best/lo/hi <= 0 (shouldn't happen
+            # for a log-uniform param, but be defensive).
+            if best <= 0 or lo <= 0 or hi <= 0:
+                continue
+            log_lo, log_hi, log_best = math.log(lo), math.log(hi), math.log(best)
+            half_width = (log_hi - log_lo) * window_frac / 2.0
+            new_lo = math.exp(max(log_lo, log_best - half_width))
+            new_hi = math.exp(min(log_hi, log_best + half_width))
+        else:
+            half_width = (hi - lo) * window_frac / 2.0
+            new_lo = max(lo, best - half_width)
+            new_hi = min(hi, best + half_width)
+
+        if new_hi <= new_lo:  # degenerate guard (e.g. best sits exactly on a bound)
+            new_lo, new_hi = lo, hi
+        spec["min"], spec["max"] = new_lo, new_hi
+
+    return narrowed
+
+
+def _run_two_phase_sweep(
+    tracker: WandbTracker, model_name: str, count_random: int, count_bayes: int, tag: str,
+) -> None:
     global _MODEL_NAME
     _MODEL_NAME = model_name
-    cfg = {**_SWEEP_CONFIGS[model_name], "name": f"{model_name}-sweep-{tag}"}
-    n = count if model_name != "ridge" else min(count, len(_SWEEP_CONFIGS["ridge"]["parameters"]["alpha"]["values"]))
-    sweep_id = tracker.create_sweep(cfg, count=n)
-    print(f"\n[{model_name.upper()}] Starting {n} sweep trials …")
-    tracker.run_sweep_agent(sweep_id, _sweep_agent_fn, count=n)
-    print(f"[{model_name.upper()}] Sweep complete — view best params in W&B UI.")
+    base_cfg = _SWEEP_CONFIGS[model_name]
+
+    # ---- Phase 1: random search (cheap, stochastic exploration) ----
+    phase1_cfg = {**base_cfg, "method": "random", "name": f"{model_name}-random-{tag}"}
+    print(f"\n[{model_name.upper()}] Phase 1/2 -- random search, {count_random} trials ...")
+    sweep_id_1 = tracker.create_sweep(phase1_cfg, count=count_random)
+    tracker.run_sweep_agent(sweep_id_1, _sweep_agent_fn, count=count_random)
+
+    # ---- Phase 2: Bayesian, informed by phase 1's best region ----
+    best_config = _best_run_config(tracker, sweep_id_1)
+    narrowed_params = _narrow_param_space(base_cfg["parameters"], best_config)
+    phase2_cfg = {**base_cfg, "parameters": narrowed_params,
+                  "method": "bayes", "name": f"{model_name}-bayes-{tag}"}
+    print(f"\n[{model_name.upper()}] Phase 2/2 -- Bayesian search (narrowed around "
+          f"phase-1 best), {count_bayes} trials ...")
+    sweep_id_2 = tracker.create_sweep(phase2_cfg, count=count_bayes)
+    tracker.run_sweep_agent(sweep_id_2, _sweep_agent_fn, count=count_bayes)
+
+    final_best = _best_run_config(tracker, sweep_id_2) or best_config
+    print(f"[{model_name.upper()}] Two-phase sweep complete. "
+          f"Best config: {final_best}")
 
 
 def main():
@@ -149,13 +256,13 @@ def main():
     print(f"  Train: {len(_X_TRAIN):,}  Val: {len(_X_VAL):,}  Features: {_X_TRAIN.shape[1]}")
 
     # ------------------------------------------------------------------
-    # Run sweep(s)
+    # Run two-phase sweep(s)
     # ------------------------------------------------------------------
     tracker = WandbTracker()
     models = ["lgbm", "xgb", "rf", "ridge"] if args.model == "all" else [args.model]
 
     for model_name in models:
-        _run_sweep(tracker, model_name, args.count, args.tag)
+        _run_two_phase_sweep(tracker, model_name, args.count_random, args.count_bayes, args.tag)
 
     print("\nAll sweeps complete. Best hyperparameters are visible in the W&B UI.")
     return 0

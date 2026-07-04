@@ -26,11 +26,20 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# W&B Sweep configuration for LightGBM hyperparameter search
+# W&B Sweep configurations — parameter spaces only.
+#
+# Per lecture 3 best practice (random search for cheap stochastic exploration,
+# then Bayesian optimization "informed" by that exploration's best region),
+# every sweep now runs as two phases orchestrated by sweep.py:
+#   Phase 1: method="random",  count_random trials over the FULL space below.
+#   Phase 2: method="bayes",   count_bayes  trials over a NARROWED space
+#            centered on phase 1's best result.
+# The "method" key below is just a default/fallback; sweep.py always
+# overrides it per phase. See sweep.py: _run_two_phase_sweep.
 # ---------------------------------------------------------------------------
 
 LGBM_SWEEP_CONFIG: Dict[str, Any] = {
-    "method": "bayes",
+    "method": "random",
     "metric": {"name": "val_rmse", "goal": "minimize"},
     "parameters": {
         "num_leaves": {"min": 31, "max": 255},
@@ -50,7 +59,7 @@ LGBM_SWEEP_CONFIG: Dict[str, Any] = {
 }
 
 XGB_SWEEP_CONFIG: Dict[str, Any] = {
-    "method": "bayes",
+    "method": "random",
     "metric": {"name": "val_rmse", "goal": "minimize"},
     "parameters": {
         "max_depth": {"min": 4, "max": 12},
@@ -80,10 +89,16 @@ RF_SWEEP_CONFIG: Dict[str, Any] = {
 }
 
 RIDGE_SWEEP_CONFIG: Dict[str, Any] = {
-    "method": "grid",
+    # alpha is continuous (not a fixed 7-value grid) so it goes through the
+    # same random -> narrowed-bayes two-phase protocol as the other models.
+    "method": "random",
     "metric": {"name": "val_rmse", "goal": "minimize"},
     "parameters": {
-        "alpha": {"values": [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]},
+        "alpha": {
+            "distribution": "log_uniform_values",
+            "min": 0.001,
+            "max": 1000.0,
+        },
     },
 }
 
