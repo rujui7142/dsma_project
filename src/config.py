@@ -186,7 +186,12 @@ MONOTONIC_INCREASING_FEATURES = [
 # ---------------------------------------------------------------------------
 SAMPLE_CONFIG = {
     "n_per_month_train": 150_000,
-    "n_per_month_test": None,       # None = load full test set
+    # Capped, not None ("load full month"): a full unsampled TLC month is
+    # 2.5-3.5M rows, and evaluate.py also builds Evidently drift reports over
+    # the ~98-feature engineered set -- combined, that OOMs a standard
+    # 7GB GitHub Actions runner. 200k/month is still a large, statistically
+    # robust evaluation sample. Override via evaluate.py's --sample flag.
+    "n_per_month_test": 200_000,
     "random_state": 42,
 }
 
@@ -204,6 +209,16 @@ WANDB_ENTITY = None  # defaults to logged-in W&B user
 # ---------------------------------------------------------------------------
 # Model hyperparameter defaults
 # ---------------------------------------------------------------------------
+# Tuned via the 20-trial W&B sweep (tag "hp-retune", 30k sample/month,
+# lgbm/xgb=bayes, rf=random, ridge=grid — the pre-two-phase sweep protocol).
+# Best val_rmse: xgb=8.346, lgbm=8.375, ridge=8.452, rf=8.467 (tightly
+# clustered on the full feature set). n_estimators is deliberately NOT taken
+# from the sweep for lgbm/xgb: it's a ceiling in our design (see
+# trainer.EARLY_STOPPING_ROUNDS), and the sweep tuned it as one swept value
+# among others (500-1500) rather than as "as high as possible" — adopting a
+# low sweep value here would reintroduce the truncated-convergence bug we
+# fixed by raising it to 3000. Re-run with the new two-phase protocol
+# (random -> narrowed bayes) to refine further.
 MODEL_DEFAULTS = {
     "lgbm": {
         # n_estimators is a ceiling, not a target: early stopping (see
@@ -211,14 +226,14 @@ MODEL_DEFAULTS = {
         # validation performance. Set high so the cap is never the binding
         # constraint — 1000 was truncating convergence on the full feature set.
         "n_estimators": 3000,
-        "learning_rate": 0.05,
-        "num_leaves": 127,
-        "max_depth": -1,
-        "min_child_samples": 50,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "reg_alpha": 0.1,
-        "reg_lambda": 0.1,
+        "learning_rate": 0.1185205798862516,
+        "num_leaves": 45,
+        "max_depth": 12,
+        "min_child_samples": 110,
+        "subsample": 0.9306560055940204,
+        "colsample_bytree": 0.5662342412045633,
+        "reg_alpha": 1.2312824586076985,
+        "reg_lambda": 1.521244034412757,
         "random_state": 42,
         "n_jobs": -1,
         "verbose": -1,
@@ -226,12 +241,12 @@ MODEL_DEFAULTS = {
     "xgb": {
         # Same rationale as lgbm above — ceiling, early stopping picks the count.
         "n_estimators": 3000,
-        "learning_rate": 0.05,
-        "max_depth": 7,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "reg_alpha": 0.1,
-        "reg_lambda": 1.0,
+        "learning_rate": 0.1504414371946877,
+        "max_depth": 12,
+        "subsample": 0.5361097024847514,
+        "colsample_bytree": 0.5715637330073469,
+        "reg_alpha": 0.0792290051076241,
+        "reg_lambda": 1.3483715452148335,
         "random_state": 42,
         "n_jobs": -1,
         "tree_method": "hist",
@@ -240,12 +255,16 @@ MODEL_DEFAULTS = {
     "rf": {
         "n_estimators": 100,
         "max_depth": 15,
-        "min_samples_leaf": 10,
-        "max_samples": 200_000,   # cap bootstrap size per tree — keeps RF fast on large datasets
+        "min_samples_leaf": 5,
+        "max_features": "log2",
+        "max_samples": 150_000,   # cap bootstrap size per tree — keeps RF fast on large datasets
         "random_state": 42,
         "n_jobs": -1,
     },
     "ridge": {
-        "alpha": 1.0,
+        # Sweep's best (0.001) sat at the search grid's lower boundary —
+        # re-run with the new two-phase protocol (continuous log-uniform
+        # range) to check whether even less regularization helps further.
+        "alpha": 0.001,
     },
 }

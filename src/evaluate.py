@@ -20,7 +20,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from src.config import DATA_PATHS, TARGET_COL, LOGS_DIR, WANDB_PROJECT
+from src.config import DATA_PATHS, TARGET_COL, LOGS_DIR, WANDB_PROJECT, SAMPLE_CONFIG
 from src.data.loader import load_parquet_files, load_taxi_zones
 from src.data.cleaner import clean_test_data, clean_training_data
 from src.features.engineer import get_raw_input_features
@@ -41,6 +41,9 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--no-wandb", action="store_true")
     p.add_argument("--tag", type=str, default="latest")
+    p.add_argument("--sample", type=int, default=SAMPLE_CONFIG["n_per_month_test"],
+                   help="rows sampled per test month (None loads the full month "
+                        "-- risks OOM on memory-constrained runners)")
     return p.parse_args()
 
 
@@ -52,7 +55,7 @@ def main():
     # 1. Load test data (2026)
     # ------------------------------------------------------------------
     print("\n=== Loading 2026 test data ===")
-    test_raw = load_parquet_files(DATA_PATHS["test"], n_per_file=None)
+    test_raw = load_parquet_files(DATA_PATHS["test"], n_per_file=args.sample)
     zones_df = load_taxi_zones(DATA_PATHS["taxi_zones"])
 
     # ------------------------------------------------------------------
