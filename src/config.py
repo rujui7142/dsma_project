@@ -142,24 +142,20 @@ ROUTE_TE_SMOOTHING = 20.0
 
 # ---------------------------------------------------------------------------
 # Feature selection (step 3): the wide candidate net is always computed, but
-# training is restricted to the learned "most predictive" subset chosen by
-# select_features.py (forward-chaining CV). When SELECTED_FEATURES is None the
-# full ~92-feature set is used; otherwise get_tree_features() filters to this list.
+# training can optionally be restricted to a learned "most predictive" subset
+# chosen by select_features.py (forward-chaining CV). When SELECTED_FEATURES is
+# None the full ~98-feature candidate set is used; otherwise get_tree_features()
+# filters to the given list.
 #
-# Below: top-12 by TreeSHAP (LightGBM champion) over the 98-candidate net.
-# Forward-chaining CV RMSE of the 12-feature set (6.72) beat the full 98-feature
-# set (6.95) by ~3.3% — extra features are noise for the tree. Notably the
-# segment-targeted interactions (overnight_x_distance, enters/exits_cbd, etc.)
-# were REJECTED here: GBMs model those interactions internally via splits, so the
-# residual error on CBD-crossing / night / long trips is largely irreducible from
-# booking-time inputs (trip duration is unavailable at booking).
-# Regenerate with `python -m src.select_features`. None = full net (for Ridge).
+# NOTE: a 30k-sample forward-chaining sweep found a 12-feature subset with
+# slightly lower CV RMSE than the full set, but at production scale (150k/month)
+# this pruning reduced performance widely — the smaller sample under-sampled
+# rare zones/routes, making high-cardinality features (PU/DOLocationID-derived
+# encodings, zone one-hots) look like noise when they are not at full scale.
+# Reverted to the full candidate net for training. Re-validate any future
+# pruning at the actual training sample size before trusting it.
 # ---------------------------------------------------------------------------
-SELECTED_FEATURES = [
-    "est_metered_fare", "trip_distance", "route_mean_fare", "log_distance",
-    "DOLocationID", "PULocationID", "hour_cos", "distance_x_cross_borough",
-    "hour_x_distance", "route_popularity", "distance_x_airport", "dow_sin",
-]
+SELECTED_FEATURES = None
 
 # ---------------------------------------------------------------------------
 # Sampling
