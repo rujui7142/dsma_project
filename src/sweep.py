@@ -187,6 +187,17 @@ def _narrow_param_space(
 
         if new_hi <= new_lo:  # degenerate guard (e.g. best sits exactly on a bound)
             new_lo, new_hi = lo, hi
+
+        # Preserve the ORIGINAL bounds' type. W&B infers int_uniform vs
+        # float_uniform from whether min/max are int or float; narrowing via
+        # arithmetic silently turns an int-typed param (e.g. max_depth:
+        # {"min": 4, "max": 12}) into floats, which W&B's validator then
+        # rejects as "ambiguous" and crashes the whole sweep.
+        if isinstance(lo, int) and isinstance(hi, int):
+            new_lo, new_hi = int(round(new_lo)), int(round(new_hi))
+            if new_hi <= new_lo:  # re-check after rounding could collapse the window
+                new_lo, new_hi = lo, hi
+
         spec["min"], spec["max"] = new_lo, new_hi
 
     return narrowed
