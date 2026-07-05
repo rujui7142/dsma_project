@@ -40,7 +40,7 @@ except ImportError:
 
 LGBM_SWEEP_CONFIG: Dict[str, Any] = {
     "method": "random",
-    "metric": {"name": "val_rmse", "goal": "minimize"},
+    "metric": {"name": "val_mae", "goal": "minimize"},
     "parameters": {
         "num_leaves": {"min": 31, "max": 255},
         "learning_rate": {
@@ -60,7 +60,7 @@ LGBM_SWEEP_CONFIG: Dict[str, Any] = {
 
 XGB_SWEEP_CONFIG: Dict[str, Any] = {
     "method": "random",
-    "metric": {"name": "val_rmse", "goal": "minimize"},
+    "metric": {"name": "val_mae", "goal": "minimize"},
     "parameters": {
         "max_depth": {"min": 4, "max": 12},
         "learning_rate": {
@@ -78,7 +78,7 @@ XGB_SWEEP_CONFIG: Dict[str, Any] = {
 
 RF_SWEEP_CONFIG: Dict[str, Any] = {
     "method": "random",
-    "metric": {"name": "val_rmse", "goal": "minimize"},
+    "metric": {"name": "val_mae", "goal": "minimize"},
     "parameters": {
         "n_estimators": {"values": [50, 100, 200]},
         "max_depth": {"values": [8, 10, 12, 15, 20]},
@@ -92,7 +92,7 @@ RIDGE_SWEEP_CONFIG: Dict[str, Any] = {
     # alpha is continuous (not a fixed 7-value grid) so it goes through the
     # same random -> narrowed-bayes two-phase protocol as the other models.
     "method": "random",
-    "metric": {"name": "val_rmse", "goal": "minimize"},
+    "metric": {"name": "val_mae", "goal": "minimize"},
     "parameters": {
         "alpha": {
             "distribution": "log_uniform_values",

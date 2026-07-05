@@ -63,6 +63,11 @@ _SWEEP_CONFIGS = {
     "ridge": RIDGE_SWEEP_CONFIG,
 }
 
+# Objective the sweep optimizes and reads back "best" by. Must match the
+# "metric.name" set on each *_SWEEP_CONFIG above (both drive W&B's Bayesian
+# search internally and the phase-1 readback in _best_run_config).
+SWEEP_METRIC = "val_mae"
+
 # How much of the original range the Bayesian phase's narrowed window keeps,
 # as a fraction of the full [min, max] width, centered on phase 1's best value.
 # 0.4 = a window 40% as wide as the original, clipped back to the original
@@ -126,11 +131,11 @@ def _best_run_config(tracker: WandbTracker, sweep_id: str) -> Optional[Dict[str,
         path = f"{tracker.entity}/{tracker.project}/{sweep_id}" if tracker.entity \
             else f"{tracker.project}/{sweep_id}"
         sweep = api.sweep(path)
-        runs = [r for r in sweep.runs if r.summary.get("val_rmse") is not None]
+        runs = [r for r in sweep.runs if r.summary.get(SWEEP_METRIC) is not None]
         if not runs:
             return None
-        best = min(runs, key=lambda r: r.summary["val_rmse"])
-        print(f"  Phase-1 best: val_rmse={best.summary['val_rmse']:.4f}  config={dict(best.config)}")
+        best = min(runs, key=lambda r: r.summary[SWEEP_METRIC])
+        print(f"  Phase-1 best: {SWEEP_METRIC}={best.summary[SWEEP_METRIC]:.4f}  config={dict(best.config)}")
         return dict(best.config)
     except Exception as exc:
         print(f"  WARNING: could not read back phase-1 best run ({exc}); "
