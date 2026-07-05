@@ -36,10 +36,10 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from src.config import (
-    DATA_PATHS, SAMPLE_CONFIG, TARGET_COL, VAL_YEARS_MONTHS, WANDB_PROJECT,
+    DATA_PATHS, SAMPLE_CONFIG, TARGET_COL, VAL_YEARS_MONTHS, WANDB_PROJECT, CLEANING,
 )
 from src.data.loader import load_parquet_files, load_taxi_zones
-from src.data.cleaner import clean_training_data
+from src.data.cleaner import clean_training_data, filter_outliers
 from src.features.engineer import FeatureEngineer, get_raw_input_features
 from src.models.trainer import train_model, build_ridge_scaler
 from src.tracking.wandb_tracker import (
@@ -254,6 +254,14 @@ def main():
 
     train_df = clean_df[~is_val].copy()
     val_df = clean_df[is_val].copy()
+
+    # Percentile outlier trim: train-only, fit on the train split -- val is
+    # scored against the real, untrimmed distribution (see
+    # clean_training_data's docstring for the rationale).
+    train_df = filter_outliers(
+        train_df, cols=["trip_distance", "trip_duration_min", TARGET_COL],
+        upper_pct=CLEANING["outlier_percentile"],
+    )
 
     X_train_raw = get_raw_input_features(train_df)
     X_val_raw = get_raw_input_features(val_df)

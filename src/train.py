@@ -10,7 +10,8 @@ Arguments:
 
 Flow:
     1. Load 2024 + 2025 training parquet files (sampled)
-    2. Clean data (filters, outlier clipping)
+    2. Clean data (filters); percentile outlier trim applied train-only, after
+       each split, so validation is scored against the real, untrimmed tail
     3. Feature engineering (domain rules + target encoding)
     4. Temporal train/val split: last 2 months (Nov-Dec 2025) held out
     5. Train LightGBM, XGBoost, Random Forest, Ridge
@@ -30,10 +31,10 @@ import pandas as pd
 
 from src.config import (
     DATA_PATHS, MODEL_DIR, SAMPLE_CONFIG, TARGET_COL, VAL_YEARS_MONTHS,
-    WANDB_PROJECT, LOGS_DIR,
+    WANDB_PROJECT, LOGS_DIR, CLEANING,
 )
 from src.data.loader import load_parquet_files, load_taxi_zones
-from src.data.cleaner import clean_training_data
+from src.data.cleaner import clean_training_data, filter_outliers
 from src.features.engineer import FeatureEngineer, get_raw_input_features
 from src.models.trainer import train_all_models, train_model, select_best_model, build_ridge_scaler
 from src.models.evaluator import error_analysis, get_feature_importance, residual_summary
@@ -162,6 +163,14 @@ def main():
                 cv_fold_rows.append({"fold": fold + 1, "model": name, **cached[name]})
             continue
 
+        # Percentile outlier trim: train-only, fit on this fold's own training
+        # window -- val is scored against the real, untrimmed distribution
+        # (see clean_training_data's docstring for the rationale).
+        tr_df = filter_outliers(
+            tr_df, cols=["trip_distance", "trip_duration_min", TARGET_COL],
+            upper_pct=CLEANING["outlier_percentile"],
+        )
+
         X_tr_raw = get_raw_input_features(tr_df)
         X_vl_raw = get_raw_input_features(vl_df)
         y_tr = tr_df[TARGET_COL].reset_index(drop=True)
@@ -207,6 +216,13 @@ def main():
     # 5. Feature engineering (on full train split for final model)
     # ------------------------------------------------------------------
     print("\n=== Feature engineering ===")
+    # Percentile outlier trim: train-only, fit on the full train split -- the
+    # held-out val_df is scored against the real, untrimmed distribution
+    # (see clean_training_data's docstring for the rationale).
+    train_df = filter_outliers(
+        train_df, cols=["trip_distance", "trip_duration_min", TARGET_COL],
+        upper_pct=CLEANING["outlier_percentile"],
+    )
     X_train_raw = get_raw_input_features(train_df)
     X_val_raw = get_raw_input_features(val_df)
     y_train = train_df[TARGET_COL].reset_index(drop=True)
