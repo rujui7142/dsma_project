@@ -168,13 +168,14 @@ def plot_metric_over_folds(
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     x = [str(f) for f in fold_labels]
 
-    fig, ax = plt.subplots(figsize=(9, 4.5))
+    fig, ax = plt.subplots(figsize=(10, 4.5))
     for model_name, values in per_model_metric.items():
         ax.plot(x, values, marker="o", linewidth=2, label=model_name)
     ax.set_xlabel("Forward-chaining fold (time →)")
     ax.set_ylabel(f"{metric_name} ($)")
     ax.set_title(title or f"{metric_name} over forward-chaining folds")
     ax.legend()
+    plt.xticks(rotation=20, ha="right")
     plt.tight_layout()
 
     out = Path(output_dir) / filename

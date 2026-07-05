@@ -164,6 +164,7 @@ def plot_shap_over_time(
     ax.set_ylabel("SHAP importance share (%)")
     ax.set_title("Feature predictive value over time (TreeSHAP)")
     ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+    plt.xticks(rotation=20, ha="right")
     plt.tight_layout()
 
     out = Path(output_dir) / filename

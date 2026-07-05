@@ -86,6 +86,17 @@ def parse_args():
     return p.parse_args()
 
 
+def _val_date_range(vl_df: pd.DataFrame) -> str:
+    """Human-readable calendar range of a fold's validation window, e.g.
+    '2025-01..2025-04', so every fold-indexed plot shows which months it
+    actually covers instead of an opaque 'F3'.
+    """
+    months = sorted(set(zip(vl_df["pickup_year"], vl_df["pickup_month"])))
+    start = f"{months[0][0]}-{months[0][1]:02d}"
+    end = f"{months[-1][0]}-{months[-1][1]:02d}"
+    return start if start == end else f"{start}..{end}"
+
+
 def _monthly_temporal_analysis(
     clean_df: pd.DataFrame,
     zones_df: pd.DataFrame,
@@ -178,7 +189,7 @@ def main():
     drift_rows = []
 
     for fold, tr_df, vl_df in forward_chain_splits(clean_df, n_splits=5):
-        fold_label = f"F{fold + 1}"
+        fold_label = f"F{fold + 1} ({_val_date_range(vl_df)})"
         fold_labels.append(fold_label)
 
         X_tr_raw = get_raw_input_features(tr_df)

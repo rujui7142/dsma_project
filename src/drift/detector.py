@@ -356,6 +356,7 @@ def plot_feature_drift_over_folds(
     ax.set_ylabel("PSI")
     ax.set_title("Feature drift over time (PSI per fold)")
     ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+    plt.xticks(rotation=20, ha="right")
     plt.tight_layout()
 
     out = Path(output_dir) / filename
@@ -407,12 +408,14 @@ def plot_psi_heatmap(
     )
 
     fig_h = max(6.0, 0.24 * len(features))
-    fig_w = max(8.0, 1.3 * len(folds) + 3.0)
+    # Wider per-fold column now that labels carry a date range (e.g.
+    # "F3 (2025-01..2025-04)"), not just "F3".
+    fig_w = max(8.0, 2.2 * len(folds) + 3.0)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
     im = ax.imshow(pivot.values, aspect="auto", cmap="YlOrRd", vmin=0, vmax=vmax)
     ax.set_xticks(range(len(folds)))
-    ax.set_xticklabels([str(f) for f in folds])
+    ax.set_xticklabels([str(f) for f in folds], rotation=20, ha="right")
     ax.set_yticks(range(len(features)))
     ax.set_yticklabels(features, fontsize=7)
     ax.set_xlabel("Fold (time →)")
