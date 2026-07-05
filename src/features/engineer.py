@@ -26,6 +26,7 @@ from src.config import (
 )
 from src.features.domain import (
     add_zone_features,
+    add_zone_geo_distance_features,
     add_airport_features,
     add_jfk_manhattan_flat_route,
     add_hotspot_features,
@@ -61,6 +62,8 @@ NUMERIC_FEATURES: List[str] = [
     "log_distance",
     "distance_sq",
     "sqrt_distance",
+    "zone_manhattan_distance",
+    "zone_euclidean_distance",
     "is_short_trip",
     "is_long_trip",
     "is_same_zone",
@@ -354,6 +357,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         # needs is_legal_holiday to gate the rush-hour surcharge correctly.
         df = add_holiday_features(df)
         df = add_zone_features(df, self.zones_df)
+        df = add_zone_geo_distance_features(df, self.zones_df)  # needs trip_distance for the NaN fallback
         df = add_borough_flags(df)           # needs pu_borough / do_borough
         df = add_airport_features(df)
         df = add_jfk_manhattan_flat_route(df)  # needs pu/do_borough + is_jfk_pu/do

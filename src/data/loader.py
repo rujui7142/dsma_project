@@ -32,7 +32,20 @@ def load_parquet_files(
 
 
 def load_taxi_zones(path: Path) -> pd.DataFrame:
-    """Load the TLC taxi zone lookup CSV."""
+    """Load the TLC taxi zone lookup CSV, enriched with zone centroid
+    coordinates (see scripts/build_zone_centroids.py) so downstream feature
+    engineering can compute a real geographic distance between PU/DO zones.
+    Zones 264 ("Unknown") and 265 ("Outside of NYC") have no real geometry,
+    so they get NaN centroids -- handled explicitly in
+    features/domain.add_zone_geo_distance_features, not silently here.
+    """
+    from src.config import DATA_PATHS  # local import: avoids a config<->loader cycle
+
     zones = pd.read_csv(path)
     zones.columns = [c.strip() for c in zones.columns]
+
+    centroids_path = DATA_PATHS.get("taxi_zone_centroids")
+    if centroids_path is not None and Path(centroids_path).exists():
+        centroids = pd.read_csv(centroids_path)[["LocationID", "centroid_x_ft", "centroid_y_ft"]]
+        zones = zones.merge(centroids, on="LocationID", how="left")
     return zones

@@ -67,6 +67,46 @@ def add_zone_features(df: pd.DataFrame, zones_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+_FEET_PER_MILE = 5280.0
+
+
+def add_zone_geo_distance_features(df: pd.DataFrame, zones_df: pd.DataFrame) -> pd.DataFrame:
+    """Real geographic distance between PU/DO zone centroids, independent of
+    the metered trip_distance -- SHAP-over-time showed trip_distance's
+    importance sliding into distance_sq/log_distance across CV folds, which
+    turned out to be collinearity/attribution instability between transforms
+    of the SAME recorded value, not evidence those transforms are "better."
+    This gives the model a genuinely different, non-metered distance signal.
+
+    Zone centroids are in NAD83 State Plane NY Long Island feet (see
+    scripts/build_zone_centroids.py) -- already planar and roughly
+    north/east-aligned, so |dx| + |dy| is a direct Manhattan-distance
+    approximation well-suited to NYC's street grid (the whole reason this
+    is worth trying over straight-line distance). Euclidean is added
+    alongside it for comparison -- let SHAP/feature-selection settle which
+    one the model actually finds useful, rather than assuming.
+
+    Zones 264 ("Unknown") and 265 ("Outside of NYC") have no real geometry
+    (confirmed absent from the TLC shapefile, not a bug) -- both centroid
+    coordinates come back NaN for those rows, and the resulting distance
+    features fall back to trip_distance (the best available guess for how
+    far the trip actually went) rather than an arbitrary constant.
+    """
+    df = df.copy()
+    cx = zones_df.set_index("LocationID")["centroid_x_ft"]
+    cy = zones_df.set_index("LocationID")["centroid_y_ft"]
+
+    pu_x, pu_y = df["PULocationID"].map(cx), df["PULocationID"].map(cy)
+    do_x, do_y = df["DOLocationID"].map(cx), df["DOLocationID"].map(cy)
+
+    manhattan_mi = (pu_x.sub(do_x).abs() + pu_y.sub(do_y).abs()) / _FEET_PER_MILE
+    euclidean_mi = np.sqrt((pu_x - do_x) ** 2 + (pu_y - do_y) ** 2) / _FEET_PER_MILE
+
+    df["zone_manhattan_distance"] = manhattan_mi.fillna(df["trip_distance"])
+    df["zone_euclidean_distance"] = euclidean_mi.fillna(df["trip_distance"])
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Airport features
 # ---------------------------------------------------------------------------

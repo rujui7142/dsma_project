@@ -11,6 +11,12 @@ DATA_PATHS = {
     "training": ROOT_DIR / "training_set",
     "test": ROOT_DIR / "test_set",
     "taxi_zones": ROOT_DIR / "taxi_zone_lookup.csv",
+    # Zone centroids (NAD83 State Plane NY Long Island, US survey feet --
+    # same CRS as the official TLC taxi_zones shapefile they're derived from)
+    # used to compute a genuine geographic distance between PU/DO zones,
+    # independent of the metered trip_distance. See features/domain.py
+    # add_zone_geo_distance_features and scripts/build_zone_centroids.py.
+    "taxi_zone_centroids": ROOT_DIR / "taxi_zone_centroids.csv",
 }
 
 MODEL_DIR = ROOT_DIR / "models"
@@ -317,6 +323,8 @@ MONOTONIC_INCREASING_FEATURES = [
     "log_distance",
     "distance_sq",
     "sqrt_distance",
+    "zone_manhattan_distance",
+    "zone_euclidean_distance",
     "est_metered_fare",
     "cbd_fee_est",
     "airport_fee_est",
