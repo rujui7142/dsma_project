@@ -9,7 +9,9 @@ from typing import List
 import numpy as np
 import pandas as pd
 
-from src.config import CLEANING, TARGET_COL
+from src.config import CLEANING, TARGET_COL, TLC_RULES
+
+_AIRPORT_ZONES = {TLC_RULES["jfk_zone_id"], TLC_RULES["lga_zone_id"], TLC_RULES["ewr_zone_id"]}
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +83,57 @@ def filter_outliers(df: pd.DataFrame, cols: List[str], upper_pct: float = 0.99, 
     return df
 
 
+def robust_zscore(series: pd.Series) -> pd.Series:
+    """Modified z-score via median absolute deviation (MAD) -- robust to
+    heavy tails and to the very outliers it's trying to detect, unlike a
+    mean/std z-score or a fixed percentile cutoff (which just moves with
+    the data rather than flagging genuine anomalies).
+    Iglewicz & Hoya (1993): |modified z| > 3.5 flags an outlier.
+    """
+    median = series.median()
+    mad = (series - median).abs().median()
+    if mad == 0:
+        mad = series.std() * 1.253314  # fallback if MAD degenerates (many ties)
+    return 0.6745 * (series - median) / mad
+
+
+def filter_fare_efficiency_outliers(
+    df: pd.DataFrame, threshold: float = 3.5, verbose: bool = True
+) -> pd.DataFrame:
+    """Catch JOINT distance/duration/fare anomalies that filter_valid_trips
+    and filter_outliers both miss because they only check each column
+    MARGINALLY. E.g. a $92.94 fare for a 0.01-mile, 40-minute trip passes
+    every existing bound individually (distance >= 0.01, duration <= 180,
+    fare <= 300) but is physically absurd together -- almost certainly a
+    GPS/meter recording glitch, not a real trip.
+
+    Computed on fare-per-mile and fare-per-minute (log-transformed, since
+    both ratios are heavily right-skewed), filtered via robust MAD z-score.
+
+    Airport trips (JFK/LGA/EWR) are EXCLUDED from this check: they use flat
+    or semi-flat fare structures that legitimately don't scale with metered
+    distance/time, so the ratio is meaningless for them -- applying this
+    filter without the exclusion would wrongly discard real airport trips
+    (verified: rows sitting at the prior fare ceiling were 71% JFK/LGA).
+    """
+    n_before = len(df)
+    is_airport = df["PULocationID"].isin(_AIRPORT_ZONES) | df["DOLocationID"].isin(_AIRPORT_ZONES)
+
+    fare_per_mile = df[TARGET_COL] / df["trip_distance"].clip(lower=0.1)
+    fare_per_min = df[TARGET_COL] / df["trip_duration_min"].clip(lower=0.5)
+    z_fpm = robust_zscore(np.log1p(fare_per_mile))
+    z_fpmin = robust_zscore(np.log1p(fare_per_min))
+
+    is_anomaly = (z_fpm.abs() > threshold) | (z_fpmin.abs() > threshold)
+    mask = ~(is_anomaly & ~is_airport)  # keep airport trips regardless
+    df = df[mask].copy()
+    if verbose:
+        removed = n_before - len(df)
+        print(f"  filter_fare_efficiency_outliers (|z|>{threshold}, non-airport only): "
+              f"removed {removed:,} rows ({removed / n_before * 100:.2f}%)")
+    return df
+
+
 def drop_na_in_inputs(df: pd.DataFrame) -> pd.DataFrame:
     """Drop rows missing core input columns (PU/DO zone, distance, datetime)."""
     required = ["PULocationID", "DOLocationID", "trip_distance",
@@ -125,6 +178,7 @@ def clean_training_data(df: pd.DataFrame) -> pd.DataFrame:
         cols=["trip_distance", "trip_duration_min", TARGET_COL],
         upper_pct=CLEANING["outlier_percentile"],
     )
+    df = filter_fare_efficiency_outliers(df, threshold=CLEANING["fare_efficiency_zscore"])
     return df.reset_index(drop=True)
 
 
@@ -136,4 +190,5 @@ def clean_test_data(df: pd.DataFrame) -> pd.DataFrame:
     df = compute_trip_duration(df)
     df = compute_target(df)
     df = filter_valid_trips(df)
+    df = filter_fare_efficiency_outliers(df, threshold=CLEANING["fare_efficiency_zscore"])
     return df.reset_index(drop=True)

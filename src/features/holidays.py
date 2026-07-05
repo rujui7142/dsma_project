@@ -24,9 +24,12 @@ import pandas as pd
 
 DateTuple = Tuple[int, int, int]  # (year, month, day)
 
-# Wide year buffer around our actual data range (>= 2014 per CLEANING) so the
+# Wide year buffer around our actual data range (>= 2024 per CLEANING) so the
 # module-level precomputation below covers any plausible past/future data.
-_YEARS = list(range(2010, 2036))
+# Capped at 2030: the `holidays` package's India calendar only computes
+# Diwali/Holi through 2030 and warns beyond that; our real data never gets
+# close to this boundary.
+_YEARS = list(range(2015, 2031))
 
 
 # ---------------------------------------------------------------------------

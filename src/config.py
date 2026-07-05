@@ -51,6 +51,13 @@ CLEANING = {
     # 2007, 2008 ...). They pollute the forward-chaining month buckets (e.g. a
     # fold labelled "2007-12..2024-02"). Drop anything before Jan 2014.
     "min_pickup_year": 2024,
+    # Robust (MAD-based) modified-z-score threshold for the fare-efficiency
+    # (fare-per-mile / fare-per-minute) joint-anomaly filter -- catches rows
+    # like a $92.94 fare for a 0.01-mile, 40-minute trip, which pass every
+    # existing MARGINAL bound individually. 3.5 is the standard Iglewicz &
+    # Hoya (1993) convention for this method. Non-airport trips only (see
+    # cleaner.filter_fare_efficiency_outliers).
+    "fare_efficiency_zscore": 3.5,
 }
 
 # ---------------------------------------------------------------------------
@@ -237,10 +244,18 @@ SELECTED_FEATURES = None
 BOROUGH_HOLIDAY_NAMES = ["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
 _HOLIDAY_RELIGION_NAMES = ["christian", "jewish", "muslim", "other_cultural"]
 
+# dxy_level / sp500_level are raw index levels -- they trend across our
+# window essentially by definition, so any two non-overlapping time windows
+# will show elevated PSI purely because "the index moved since then", same
+# issue as pickup_month. dxy_change_1m / sp500_return_1m are NOT excluded:
+# a real 1-month swing (e.g. a market shock) is exactly the kind of genuine,
+# actionable external event PSI should flag -- same rationale as keeping
+# is_post_cbd / cbd_* in monitoring.
 DRIFT_EXCLUDE_FEATURES = [
     "pickup_month", "pickup_year", "month_sin", "month_cos", "days_to_nearest_holiday",
     "is_holiday", "is_major_holiday", "is_federal_holiday",
     "is_christian_holiday", "is_jewish_holiday", "is_muslim_holiday", "is_other_cultural_holiday",
+    "dxy_level", "sp500_level",
 ] + [
     f"{religion}_holiday_x_{borough}"
     for borough in BOROUGH_HOLIDAY_NAMES

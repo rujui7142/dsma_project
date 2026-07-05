@@ -46,6 +46,7 @@ from src.features.domain import (
     add_zone_fare_std,
 )
 from src.features.holidays import add_holiday_features
+from src.features.macro import add_macro_features
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +132,11 @@ NUMERIC_FEATURES: List[str] = [
     "is_muslim_holiday",
     "is_other_cultural_holiday",
     "days_to_nearest_holiday",
+    # --- macro-financial (wealth-effect / ability-to-pay proxy) ---
+    "dxy_level",
+    "sp500_level",
+    "dxy_change_1m",
+    "sp500_return_1m",
     # --- borough x holiday-religion interactions (full unbiased cross product) ---
     "christian_holiday_x_manhattan",
     "jewish_holiday_x_manhattan",
@@ -339,6 +345,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         df = add_estimated_charges_total(df)
         df = add_metered_fare_estimate(df)   # needs estimated_surcharges
         df = add_holiday_features(df)        # needs pickup_year/month/day
+        df = add_macro_features(df)          # needs pickup_year/month/day
         df = _add_interaction_features(df)   # needs zone/time/cbd/holiday flags
 
         # 2. Learned zone popularity + route stats + zone fare std + one-hot
