@@ -120,6 +120,7 @@ def add_borough_flags(df: pd.DataFrame) -> pd.DataFrame:
         df[f"is_brooklyn_{side}"] = (b == "Brooklyn").astype(np.int8)
         df[f"is_queens_{side}"] = (b == "Queens").astype(np.int8)
         df[f"is_bronx_{side}"] = (b == "Bronx").astype(np.int8)
+        df[f"is_staten_island_{side}"] = (b == "Staten Island").astype(np.int8)
         # outer borough = not Manhattan and not an airport/EWR pseudo-borough
         df[f"is_outer_borough_{side}"] = (
             ~b.isin(["Manhattan", "EWR", "Unknown"])

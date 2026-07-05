@@ -1,80 +1,65 @@
 """US federal + major religious/cultural holiday features for NYC trip data.
 
-Two kinds of holiday dates:
-  - RULE-BASED (computed for any year): fixed calendar dates (Jan 1, Jul 4, ...)
-    and "nth weekday of month" rules (MLK Day, Thanksgiving, ...).
-  - MOVABLE / LUNAR (hardcoded per year): Easter, Jewish holidays (Hebrew
-    lunisolar calendar), Islamic holidays (Hijri lunar calendar, drifts ~11
-    days earlier each year), Diwali, Lunar New Year. These cannot be derived
-    by a simple formula, so exact dates are hardcoded for 2024-2026 (the span
-    of our actual training/test data) from published religious calendars.
-    Islamic dates additionally depend on local moon sighting and can shift by
-    a day; treat as accurate to within ±1 day.
+Three sources of holiday dates, all generalizing to ANY year (no hardcoded
+per-year date tables):
 
-Only 2024-2026 movable dates are populated (that's our real data range); a
-row from an earlier/garbage year simply won't match any movable holiday,
-which is a harmless fallback for the handful of corrupt-timestamp rows the
-2014 floor doesn't already remove.
+  - RULE-BASED (pure formula): fixed calendar dates (Jan 1, Jul 4, ...) and
+    "nth weekday of month" rules (MLK Day, Thanksgiving, Election Day, ...).
+  - EASTER / GOOD FRIDAY: the Anonymous Gregorian (Meeus/Jones/Butcher)
+    algorithm — a closed-form Computus formula, valid for any Gregorian year.
+  - MOVABLE / LUNAR (Jewish, Islamic, Hindu, Chinese calendars): computed via
+    the `holidays` package, which implements the actual Hebrew, (tabular)
+    Hijri, and Chinese lunisolar calendar arithmetic — not lookup tables — so
+    it is correct for any year, not just the ones we happened to verify.
+    Cross-checked against manually-sourced 2024-2026 dates (web search) before
+    switching to this library; all matched exactly except Diwali 2024, which
+    is a known ±1-day ambiguity between regional calendar conventions.
 """
 
 from typing import Dict, List, Set, Tuple
 
+import holidays as _holidays_lib
 import numpy as np
 import pandas as pd
 
 DateTuple = Tuple[int, int, int]  # (year, month, day)
 
-
-def _expand_range(start: DateTuple, n_days: int) -> List[DateTuple]:
-    """Expand a (year, month, day) start date into n_days consecutive dates."""
-    ts = pd.Timestamp(*start)
-    return [(d.year, d.month, d.day) for d in pd.date_range(ts, periods=n_days)]
+# Wide year buffer around our actual data range (>= 2014 per CLEANING) so the
+# module-level precomputation below covers any plausible past/future data.
+_YEARS = list(range(2010, 2036))
 
 
 # ---------------------------------------------------------------------------
-# Movable / lunar holidays — hardcoded, verified per-year dates (2024-2026)
+# Easter / Good Friday — closed-form Computus formula (any Gregorian year)
 # ---------------------------------------------------------------------------
 
-CHRISTIAN_MOVABLE: List[DateTuple] = [
-    (2024, 3, 29), (2025, 4, 18), (2026, 4, 3),    # Good Friday
-    (2024, 3, 31), (2025, 4, 20), (2026, 4, 5),    # Easter Sunday
-]
+def _easter_sunday(year: int) -> DateTuple:
+    """Anonymous Gregorian algorithm (Meeus/Jones/Butcher)."""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return (year, month, day)
 
-JEWISH_MOVABLE: List[DateTuple] = (
-    [(2024, 10, 3), (2024, 10, 4)]                  # Rosh Hashanah
-    + [(2025, 9, 23), (2025, 9, 24)]
-    + [(2026, 9, 12), (2026, 9, 13)]
-    + [(2024, 10, 12)]                              # Yom Kippur
-    + [(2025, 10, 2)]
-    + [(2026, 9, 21)]
-    + _expand_range((2024, 4, 23), 8)                # Passover
-    + _expand_range((2025, 4, 13), 8)
-    + _expand_range((2026, 4, 2), 8)
-    + _expand_range((2024, 12, 26), 8)               # Hanukkah
-    + _expand_range((2025, 12, 15), 8)
-    + _expand_range((2026, 12, 5), 8)                # approximate, unverified
-)
 
-MUSLIM_MOVABLE: List[DateTuple] = [
-    (2024, 4, 10),                                   # Eid al-Fitr
-    (2025, 3, 30),
-    (2026, 3, 20),
-    (2024, 6, 16),                                   # Eid al-Adha
-    (2025, 6, 7),
-    (2026, 5, 27),                                   # approximate
-]
+def _good_friday(year: int) -> DateTuple:
+    d = pd.Timestamp(*_easter_sunday(year)) - pd.Timedelta(days=2)
+    return (d.year, d.month, d.day)
 
-OTHER_CULTURAL_MOVABLE: List[DateTuple] = [
-    (2024, 10, 31),                                  # Diwali (coincides with Halloween in 2024)
-    (2025, 10, 20),
-    (2026, 11, 8),
-    (2024, 2, 10),                                   # Lunar New Year
-    (2025, 1, 29),
-    (2026, 2, 17),
-]
 
-# Fixed-date, non-religious holidays with a clear NYC demand/traffic signature
-_FIXED_DATES: List[DateTuple] = []  # filled per-year in build_holiday_sets()
+# ---------------------------------------------------------------------------
+# Rule-based federal / civil holidays — pure formulas (any year)
+# ---------------------------------------------------------------------------
 
 FIXED_MONTH_DAY: List[Tuple[int, int]] = [
     (1, 1),    # New Year's Day
@@ -88,28 +73,22 @@ FIXED_MONTH_DAY: List[Tuple[int, int]] = [
     (12, 31),  # New Year's Eve
 ]
 
-# Federal holidays computed by rule (nth weekday of month); "n" negative = from month end
+# name, month, weekday (0=Mon..6=Sun), n (nth occurrence; -1 = last in month)
 RULE_HOLIDAYS = [
-    ("MLK Day", 1, 0, 3),          # 3rd Monday of January
-    ("Presidents Day", 2, 0, 3),   # 3rd Monday of February
-    ("Memorial Day", 5, 0, -1),    # last Monday of May
-    ("Labor Day", 9, 0, 1),        # 1st Monday of September
-    ("Columbus Day", 10, 0, 2),    # 2nd Monday of October
-    ("Thanksgiving", 11, 3, 4),    # 4th Thursday of November
-    ("Mother's Day", 5, 6, 2),     # 2nd Sunday of May
+    ("MLK Day", 1, 0, 3),
+    ("Presidents Day", 2, 0, 3),
+    ("Memorial Day", 5, 0, -1),
+    ("Labor Day", 9, 0, 1),
+    ("Columbus Day", 10, 0, 2),
+    ("Thanksgiving", 11, 3, 4),
+    ("Mother's Day", 5, 6, 2),
 ]
 
-# Subset with the biggest NYC travel/demand-shift signature
-MAJOR_HOLIDAY_MONTH_DAY: Set[Tuple[int, int]] = {
-    (1, 1), (12, 25), (12, 31), (7, 4), (10, 31),
-}
+MAJOR_HOLIDAY_MONTH_DAY: Set[Tuple[int, int]] = {(1, 1), (12, 25), (12, 31), (7, 4), (10, 31)}
 MAJOR_HOLIDAY_RULE_NAMES = {"Thanksgiving"}
 
-FEDERAL_HOLIDAY_MONTH_DAY: Set[Tuple[int, int]] = {
-    (1, 1), (6, 19), (7, 4), (11, 11), (12, 25),
-}
+FEDERAL_HOLIDAY_MONTH_DAY: Set[Tuple[int, int]] = {(1, 1), (6, 19), (7, 4), (11, 11), (12, 25)}
 FEDERAL_RULE_NAMES = {"MLK Day", "Presidents Day", "Memorial Day", "Labor Day", "Columbus Day"}
-# Election Day and Veterans Day are federal but computed/listed separately below.
 
 
 def _nth_weekday(year: int, month: int, weekday: int, n: int) -> DateTuple:
@@ -120,7 +99,6 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> DateTuple:
     if n > 0:
         d = first_occurrence + pd.Timedelta(weeks=n - 1)
         return (d.year, d.month, d.day)
-    # last occurrence in month
     next_month = pd.Timestamp(year, month, 1) + pd.DateOffset(months=1)
     last_day = next_month - pd.Timedelta(days=1)
     last_weekday_offset = (last_day.dayofweek - weekday) % 7
@@ -135,11 +113,56 @@ def _election_day(year: int) -> DateTuple:
     return (d.year, d.month, d.day)
 
 
-def build_holiday_sets(years: List[int]) -> Dict[str, Set[DateTuple]]:
-    """Build the full set of (year, month, day) tuples per holiday category
-    for the given years, combining rule-based/fixed dates with the hardcoded
-    movable-holiday tables above.
+# ---------------------------------------------------------------------------
+# Movable religious/cultural calendars — computed via the `holidays` package
+# (real calendar arithmetic, not per-year lookup tables)
+# ---------------------------------------------------------------------------
+
+def _lib_dates(country_holidays, name_filter=None) -> Set[DateTuple]:
+    """Extract (year, month, day) tuples from a `holidays` calendar object,
+    optionally keeping only entries whose name contains one of name_filter
+    (case-insensitive) — used to pull just the religious holidays out of a
+    country calendar that also includes secular/national ones.
     """
+    out = set()
+    for d, name in country_holidays.items():
+        if name_filter is None or any(kw.lower() in name.lower() for kw in name_filter):
+            out.add((d.year, d.month, d.day))
+    return out
+
+
+def _build_jewish_dates(years: List[int]) -> Set[DateTuple]:
+    il = _holidays_lib.IL(years=years, language="en_US",
+                           categories=("public", "optional", "school"))
+    return _lib_dates(il)  # all Israeli religious/civil observances -> "jewish"
+
+
+def _build_muslim_dates(years: List[int]) -> Set[DateTuple]:
+    sa = _holidays_lib.SaudiArabia(years=years, language="en_US")
+    return _lib_dates(sa, name_filter=["eid"])  # exclude Founding/National Day
+
+
+def _build_other_cultural_dates(years: List[int]) -> Set[DateTuple]:
+    india = _holidays_lib.India(years=years, language="en_US")
+    china = _holidays_lib.China(years=years, language="en_US")
+    diwali = _lib_dates(india, name_filter=["diwali", "deepavali"])
+    lunar_ny = _lib_dates(china, name_filter=["chinese new year", "spring festival"])
+    return diwali | lunar_ny
+
+
+def _build_christian_dates(years: List[int]) -> Set[DateTuple]:
+    dates = {(y, 12, 25) for y in years}  # Christmas (also in FIXED_MONTH_DAY)
+    for y in years:
+        dates.add(_easter_sunday(y))
+        dates.add(_good_friday(y))
+    return dates
+
+
+# ---------------------------------------------------------------------------
+# Assemble all categories
+# ---------------------------------------------------------------------------
+
+def build_holiday_sets(years: List[int]) -> Dict[str, Set[DateTuple]]:
     fixed_all, major_all, federal_all, rule_by_name = [], [], [], {}
 
     for yr in years:
@@ -158,26 +181,27 @@ def build_holiday_sets(years: List[int]) -> Dict[str, Set[DateTuple]]:
             if name in FEDERAL_RULE_NAMES:
                 federal_all.append(d)
 
-        elec = _election_day(yr)
-        federal_all.append(elec)
+        federal_all.append(_election_day(yr))
 
     all_rule_dates = [d for dates in rule_by_name.values() for d in dates]
     all_rule_dates += [_election_day(yr) for yr in years]
 
+    christian = _build_christian_dates(years)
+    jewish = _build_jewish_dates(years)
+    muslim = _build_muslim_dates(years)
+    other_cultural = _build_other_cultural_dates(years)
+
     return {
-        "any": set(fixed_all) | set(all_rule_dates) | set(CHRISTIAN_MOVABLE)
-               | set(JEWISH_MOVABLE) | set(MUSLIM_MOVABLE) | set(OTHER_CULTURAL_MOVABLE),
+        "any": set(fixed_all) | set(all_rule_dates) | christian | jewish | muslim | other_cultural,
         "major": set(major_all),
         "federal": set(federal_all),
-        "christian": set(CHRISTIAN_MOVABLE) | {(y, 12, 25) for y in years},
-        "jewish": set(JEWISH_MOVABLE),
-        "muslim": set(MUSLIM_MOVABLE),
-        "other_cultural": set(OTHER_CULTURAL_MOVABLE),
+        "christian": christian,
+        "jewish": jewish,
+        "muslim": muslim,
+        "other_cultural": other_cultural,
     }
 
 
-# Pre-built for the span our data actually covers (with margin either side).
-_YEARS = list(range(2014, 2028))
 _HOLIDAY_SETS = build_holiday_sets(_YEARS)
 _ALL_HOLIDAY_ORDINALS = np.array(sorted(
     pd.Timestamp(y, m, d).toordinal() for (y, m, d) in _HOLIDAY_SETS["any"]
@@ -202,9 +226,6 @@ def add_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
         (k in _HOLIDAY_SETS["other_cultural"] for k in keys), dtype=np.int8, count=len(keys)
     )
 
-    # Continuous proximity signal (days to nearest holiday, either direction) —
-    # captures elevated demand on eves/after-days (Christmas Eve, Black Friday)
-    # that the exact-day flags alone miss.
     ordinals = pd.to_datetime(
         {"year": df["pickup_year"], "month": df["pickup_month"], "day": df["pickup_day"]}
     ).map(pd.Timestamp.toordinal).to_numpy()

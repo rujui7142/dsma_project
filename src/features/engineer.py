@@ -116,6 +116,8 @@ NUMERIC_FEATURES: List[str] = [
     "is_queens_do",
     "is_bronx_pu",
     "is_bronx_do",
+    "is_staten_island_pu",
+    "is_staten_island_do",
     "is_outer_borough_pu",
     "is_outer_borough_do",
     # --- holidays ---
@@ -127,9 +129,27 @@ NUMERIC_FEATURES: List[str] = [
     "is_muslim_holiday",
     "is_other_cultural_holiday",
     "days_to_nearest_holiday",
+    # --- borough x holiday-religion interactions (full unbiased cross product) ---
+    "christian_holiday_x_manhattan",
+    "jewish_holiday_x_manhattan",
+    "muslim_holiday_x_manhattan",
+    "other_cultural_holiday_x_manhattan",
+    "christian_holiday_x_brooklyn",
     "jewish_holiday_x_brooklyn",
+    "muslim_holiday_x_brooklyn",
+    "other_cultural_holiday_x_brooklyn",
+    "christian_holiday_x_queens",
+    "jewish_holiday_x_queens",
     "muslim_holiday_x_queens",
-    "cultural_holiday_x_queens",
+    "other_cultural_holiday_x_queens",
+    "christian_holiday_x_bronx",
+    "jewish_holiday_x_bronx",
+    "muslim_holiday_x_bronx",
+    "other_cultural_holiday_x_bronx",
+    "christian_holiday_x_staten_island",
+    "jewish_holiday_x_staten_island",
+    "muslim_holiday_x_staten_island",
+    "other_cultural_holiday_x_staten_island",
     # --- surcharge estimates ---
     "congestion_surcharge_est",
     "cbd_fee_est",
@@ -204,6 +224,12 @@ def _add_distance_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# All 5 NYC boroughs — must match the is_{name}_pu / is_{name}_do columns
+# produced by add_borough_flags (brooklyn/queens/bronx/staten_island) and
+# add_zone_features (manhattan).
+BOROUGH_HOLIDAY_NAMES = ["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
+
+
 def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["distance_x_airport"] = df["trip_distance"] * df["is_airport_route"]
@@ -220,16 +246,16 @@ def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     df["overnight_x_distance"] = df["is_overnight"] * df["trip_distance"]
     df["night_x_airport"] = df["is_overnight"] * df["is_airport_route"]
     df["longtrip_x_airport"] = df["is_long_trip"] * df["is_airport_route"]
-    # Borough x religious/cultural-holiday interactions — domain priors on
-    # which NYC communities are concentrated where (not measured demographic
-    # data): Brooklyn has the city's largest Orthodox/Hasidic Jewish
-    # population (Borough Park, Williamsburg, Crown Heights); Queens has large
-    # South Asian/Middle Eastern Muslim communities (Jackson Heights, Astoria,
-    # Richmond Hill) and the Flushing Chinese community relevant to Diwali/
-    # Lunar New Year. Left for SHAP/feature-selection to validate or reject.
-    df["jewish_holiday_x_brooklyn"] = df["is_jewish_holiday"] * (df["is_brooklyn_pu"] | df["is_brooklyn_do"])
-    df["muslim_holiday_x_queens"] = df["is_muslim_holiday"] * (df["is_queens_pu"] | df["is_queens_do"])
-    df["cultural_holiday_x_queens"] = df["is_other_cultural_holiday"] * (df["is_queens_pu"] | df["is_queens_do"])
+    # Borough x religious/cultural-holiday interactions — full, unbiased cross
+    # product of all 5 boroughs x all 4 holiday-religion categories. No prior
+    # assumption about which borough is "affected" by which holiday (e.g.
+    # Brooklyn/Jewish, Queens/Muslim) is baked in here; every combination is
+    # generated identically and left for SHAP/feature-selection to validate
+    # or reject on its own merit.
+    for borough in BOROUGH_HOLIDAY_NAMES:
+        touches_borough = df[f"is_{borough}_pu"] | df[f"is_{borough}_do"]
+        for religion in ("christian", "jewish", "muslim", "other_cultural"):
+            df[f"{religion}_holiday_x_{borough}"] = df[f"is_{religion}_holiday"] * touches_borough
     return df
 
 
