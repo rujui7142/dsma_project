@@ -22,7 +22,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 import src.config as _config
 from src.config import (
     RAW_INPUT_COLS, TARGET_COL, N_TOP_ZONES_ONEHOT, ONEHOT_ZONE_PREFIX,
-    ROUTE_TE_SMOOTHING,
+    ROUTE_TE_SMOOTHING, BOROUGH_HOLIDAY_NAMES,
 )
 from src.features.domain import (
     add_zone_features,
@@ -104,6 +104,8 @@ NUMERIC_FEATURES: List[str] = [
     "is_yellow_zone_do",
     "is_manhattan_pu",
     "is_manhattan_do",
+    "is_cbd_pu",
+    "is_cbd_do",
     "is_cross_borough",
     "crosses_cbd",
     "fully_within_cbd",
@@ -222,12 +224,6 @@ def _add_distance_features(df: pd.DataFrame) -> pd.DataFrame:
     df["log_distance"] = np.log1p(df["trip_distance"])
     df["distance_sq"] = df["trip_distance"] ** 2
     return df
-
-
-# All 5 NYC boroughs — must match the is_{name}_pu / is_{name}_do columns
-# produced by add_borough_flags (brooklyn/queens/bronx/staten_island) and
-# add_zone_features (manhattan).
-BOROUGH_HOLIDAY_NAMES = ["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
 
 
 def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:

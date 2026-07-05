@@ -13,7 +13,7 @@ import numpy as np
 
 from src.config import (
     TLC_RULES, BOROUGH_MAP, SERVICE_ZONE_MAP,
-    WEST_VILLAGE_ZONES, HOTSPOT_ZONES, METERED_FARE,
+    WEST_VILLAGE_ZONES, HOTSPOT_ZONES, METERED_FARE, CBD_ZONES,
 )
 
 _JFK = TLC_RULES["jfk_zone_id"]
@@ -22,6 +22,7 @@ _EWR = TLC_RULES["ewr_zone_id"]
 _CBD_YEAR = TLC_RULES["cbd_start_year"]
 _WEST_VILLAGE = set(WEST_VILLAGE_ZONES)
 _HOTSPOTS = set(HOTSPOT_ZONES)
+_CBD_ZONES = set(CBD_ZONES)
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,11 @@ def add_zone_features(df: pd.DataFrame, zones_df: pd.DataFrame) -> pd.DataFrame:
     df["is_manhattan_do"] = (df["do_borough"] == "Manhattan").astype(np.int8)
     df["is_yellow_zone_pu"] = (df["pu_service_zone"] == "Yellow Zone").astype(np.int8)
     df["is_yellow_zone_do"] = (df["do_service_zone"] == "Yellow Zone").astype(np.int8)
+    # Precise Congestion Relief Zone (CRZ) membership — Manhattan at/south of
+    # 60th St (see config.CBD_ZONES). Tighter than the Yellow Zone label
+    # above, which is used for the separate $2.50 NYS surcharge (96th St).
+    df["is_cbd_pu"] = df["PULocationID"].isin(_CBD_ZONES).astype(np.int8)
+    df["is_cbd_do"] = df["DOLocationID"].isin(_CBD_ZONES).astype(np.int8)
     df["is_cross_borough"] = (df["pu_borough"] != df["do_borough"]).astype(np.int8)
 
     # Encode string categoricals to stable integers (same mapping at inference)
@@ -296,17 +302,18 @@ def add_extra_time_flags(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def add_cbd_crossing(df: pd.DataFrame) -> pd.DataFrame:
-    """Flag whether a trip crosses the Manhattan Yellow Zone / CBD boundary.
+    """Flag whether a trip crosses the true CRZ (Congestion Relief Zone) boundary.
 
-    Requires is_yellow_zone_pu / is_yellow_zone_do (added by add_zone_features).
+    Requires is_cbd_pu / is_cbd_do (added by add_zone_features) — the precise
+    "Manhattan at/south of 60th St" boundary, not the wider Yellow Zone (96th St).
       - crosses_cbd      : exactly one endpoint inside the CBD (commuter in/out)
       - fully_within_cbd : both endpoints inside the CBD (short intra-core trips)
     These separate the two very different pricing regimes the error analysis
     surfaced (short CBD trips vs. airport trips).
     """
     df = df.copy()
-    pu_in = df["is_yellow_zone_pu"].astype(bool)
-    do_in = df["is_yellow_zone_do"].astype(bool)
+    pu_in = df["is_cbd_pu"].astype(bool)
+    do_in = df["is_cbd_do"].astype(bool)
     df["crosses_cbd"] = (pu_in ^ do_in).astype(np.int8)
     df["fully_within_cbd"] = (pu_in & do_in).astype(np.int8)
     # Directional crossing — entering vs leaving the CBD priced differently
@@ -337,17 +344,18 @@ def add_congestion_surcharge(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def add_cbd_fee(df: pd.DataFrame) -> pd.DataFrame:
-    """Estimate the $9.00 MTA Congestion Relief Zone fee.
+    """Estimate the $0.75 MTA Congestion Relief Zone (CRZ) toll.
 
-    Applies to trips in/through Manhattan (Yellow Zone) that occur on or after
-    Jan 5, 2025.  We use pickup_year >= 2025 as a practical proxy (edge-case
-    of Jan 1–4 2025 is < 0.05% of the 2025 training data).
+    Applies to trips in/through the precise CRZ (Manhattan at/south of 60th
+    St — see config.CBD_ZONES, is_cbd_pu/do) that occur on or after Jan 5,
+    2025. We use pickup_year >= 2025 as a practical proxy (edge-case of
+    Jan 1-4 2025 is < 0.05% of the 2025 training data).
     """
     df = df.copy()
     is_post_cbd = (df["pickup_year"] >= _CBD_YEAR).astype(bool)
-    is_manhattan_trip = (df["is_yellow_zone_pu"] | df["is_yellow_zone_do"]).astype(bool)
+    is_cbd_trip = (df["is_cbd_pu"] | df["is_cbd_do"]).astype(bool)
     df["is_post_cbd"] = is_post_cbd.astype(np.int8)
-    df["cbd_fee_est"] = (is_post_cbd & is_manhattan_trip).astype(float) * TLC_RULES["cbd_congestion_fee"]
+    df["cbd_fee_est"] = (is_post_cbd & is_cbd_trip).astype(float) * TLC_RULES["cbd_congestion_fee"]
     return df
 
 

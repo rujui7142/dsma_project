@@ -110,6 +110,24 @@ SERVICE_ZONE_MAP = {
 }
 
 # ---------------------------------------------------------------------------
+# NYC Congestion Relief Zone (CRZ) — the true $0.75 CBD toll boundary.
+#
+# The MTA's official rule: all local Manhattan streets/avenues AT OR SOUTH OF
+# 60th Street (source: mta.info/agency/bridges-and-tunnels/congestion-relief-zone).
+# This is a TIGHTER boundary than the "Yellow Zone" service_zone label already
+# used elsewhere (that one extends to 96th St, for the separate $2.50 NYS
+# congestion surcharge). Built by classifying every Manhattan taxi zone
+# against the 60th-St line (verified against the MTA's public boundary
+# description), not a coarse proxy.
+# ---------------------------------------------------------------------------
+CBD_ZONES = [
+    4, 12, 13, 45, 48, 50, 68, 79, 87, 88, 90, 100, 107, 113, 114, 125, 137,
+    144, 148, 158, 161, 162, 163, 164, 170,           # Midtown/Downtown core
+    186, 209, 211, 224, 229, 230, 231, 232, 233, 234, # Flatiron/Union Sq/SoHo/
+    246, 249, 261,                                    # TriBeCa/West Village/WTC
+]
+
+# ---------------------------------------------------------------------------
 # High-demand "hotspot" zones (domain knowledge from EDA)
 # ---------------------------------------------------------------------------
 # West Village was flagged in the EDA as an especially popular / informative
@@ -204,9 +222,30 @@ SELECTED_FEATURES = None
 # around the same holidays), so a fold validating on a different slice of the
 # calendar than the reference will show it "drifted" purely because time
 # moved forward, not because the holiday calendar itself changed.
+#
+# Same logic extends to every holiday flag EXCEPT ones that land on a fixed
+# Gregorian calendar date every year. Movable/lunar holidays (Jewish, Muslim,
+# Diwali/Lunar New Year, Easter/Good Friday) and "nth weekday of month" rule
+# holidays (MLK Day, Thanksgiving, Labor Day, ...) fall on a DIFFERENT
+# (month, day) each year, so a fold spanning different years than the
+# reference will show spurious PSI purely from the date shifting — not a
+# genuine change in the holiday itself. is_holiday / is_major_holiday /
+# is_federal_holiday / is_christian_holiday are themselves MIXES of fixed and
+# movable dates (e.g. is_federal_holiday includes both Jul 4 [fixed] and MLK
+# Day [movable]), so they inherit the same noise and are excluded too. All 20
+# borough x religion interactions involve at least one movable category.
 # ---------------------------------------------------------------------------
+BOROUGH_HOLIDAY_NAMES = ["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
+_HOLIDAY_RELIGION_NAMES = ["christian", "jewish", "muslim", "other_cultural"]
+
 DRIFT_EXCLUDE_FEATURES = [
     "pickup_month", "pickup_year", "month_sin", "month_cos", "days_to_nearest_holiday",
+    "is_holiday", "is_major_holiday", "is_federal_holiday",
+    "is_christian_holiday", "is_jewish_holiday", "is_muslim_holiday", "is_other_cultural_holiday",
+] + [
+    f"{religion}_holiday_x_{borough}"
+    for borough in BOROUGH_HOLIDAY_NAMES
+    for religion in _HOLIDAY_RELIGION_NAMES
 ]
 
 # ---------------------------------------------------------------------------

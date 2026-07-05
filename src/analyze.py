@@ -52,9 +52,13 @@ from src.train import forward_chain_splits
 _ALL_MODELS = ("lgbm", "xgb", "rf", "ridge")
 
 # Segment dimensions to break error down by (must exist on the engineered df).
+# is_major_holiday added to directly test "holiday fares run much higher" via
+# segmented MAE — aggregate SHAP importance underweights effects concentrated
+# on a small subset of rows (only ~10-15 holiday days/year), so a rare-but-
+# large effect can look negligible in SHAP while still showing up here.
 SEGMENT_DIMS = [
     "pu_borough", "distance_bin", "pickup_hour",
-    "is_airport_route", "is_hotspot_route", "crosses_cbd",
+    "is_airport_route", "is_hotspot_route", "crosses_cbd", "is_major_holiday",
 ]
 
 # First month affected by the CBD congestion fee — marked on the temporal plot.
@@ -75,6 +79,10 @@ def parse_args():
     p.add_argument("--no-wandb", action="store_true")
     p.add_argument("--tag", type=str, default="analysis",
                    help="W&B run label only — local plot/log filenames are fixed")
+    p.add_argument("--models", type=str, default="lgbm",
+                   help="comma-separated subset of lgbm,xgb,rf,ridge. Defaults to "
+                        "lgbm only -- xgb/rf track it closely, so running all 4 "
+                        "every time mostly triples runtime for little new signal.")
     return p.parse_args()
 
 
@@ -135,6 +143,11 @@ def _monthly_temporal_analysis(
 def main():
     args = parse_args()
     OUTPUTS_PLOTS.mkdir(parents=True, exist_ok=True)
+    models = tuple(m.strip() for m in args.models.split(","))
+    invalid = set(models) - set(_ALL_MODELS)
+    if invalid:
+        raise ValueError(f"Unknown model(s) in --models: {invalid}. Choose from {_ALL_MODELS}")
+    print(f"  Models: {models}")
 
     # ------------------------------------------------------------------
     # Load train/val data only (never the test set)
@@ -153,9 +166,9 @@ def main():
     # ------------------------------------------------------------------
     print("\n=== Forward-chaining analysis ===")
     fold_labels = []
-    mae_over_folds = {m: [] for m in _ALL_MODELS}
-    rmse_over_folds = {m: [] for m in _ALL_MODELS}
-    segment_errors = {m: {d: [] for d in SEGMENT_DIMS} for m in _ALL_MODELS}
+    mae_over_folds = {m: [] for m in models}
+    rmse_over_folds = {m: [] for m in models}
+    segment_errors = {m: {d: [] for d in SEGMENT_DIMS} for m in models}
     fold_models = {}
     fold_shap_X = {}
     feature_names = None
@@ -193,7 +206,7 @@ def main():
             random_state=SAMPLE_CONFIG["random_state"],
         )
 
-        for name in _ALL_MODELS:
+        for name in models:
             model, metrics = train_model(
                 name, X_tr_feat, y_tr, X_vl_feat, y_vl, scaler=scaler,
             )
@@ -227,7 +240,7 @@ def main():
     # ------------------------------------------------------------------
     # Pick CV champion (lowest mean RMSE across folds)
     # ------------------------------------------------------------------
-    mean_rmse = {m: float(np.mean(rmse_over_folds[m])) for m in _ALL_MODELS}
+    mean_rmse = {m: float(np.mean(rmse_over_folds[m])) for m in models}
     champion = min(mean_rmse, key=mean_rmse.get)
     print("\n=== CV summary (mean RMSE over folds) ===")
     for m in sorted(mean_rmse, key=mean_rmse.get):
@@ -350,7 +363,7 @@ def main():
             "sample_per_month": args.sample,
             "n_folds": len(fold_labels),
             "champion": champion,
-            "models": list(_ALL_MODELS),
+            "models": list(models),
         },
         enabled=not args.no_wandb,
     )
@@ -358,7 +371,7 @@ def main():
         "champion": champion,
         "champion_mean_rmse": mean_rmse[champion],
         "champion_mean_mae": float(np.mean(mae_over_folds[champion])),
-        **{f"cv_rmse/{m}": mean_rmse[m] for m in _ALL_MODELS},
+        **{f"cv_rmse/{m}": mean_rmse[m] for m in models},
     })
     for name, fig in figures.items():
         if fig is not None:
