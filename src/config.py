@@ -31,6 +31,7 @@ RAW_INPUT_COLS = [
     "trip_distance",
     "pickup_hour",
     "pickup_dayofweek",
+    "pickup_day",
     "pickup_month",
     "pickup_year",
 ]

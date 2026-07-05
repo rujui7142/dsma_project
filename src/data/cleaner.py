@@ -22,6 +22,7 @@ def add_datetime_features(df: pd.DataFrame) -> pd.DataFrame:
     dt = pd.to_datetime(df["tpep_pickup_datetime"])
     df["pickup_hour"] = dt.dt.hour
     df["pickup_dayofweek"] = dt.dt.dayofweek  # 0=Monday … 6=Sunday
+    df["pickup_day"] = dt.dt.day              # day of month (1-31) — needed for holiday matching
     df["pickup_month"] = dt.dt.month
     df["pickup_year"] = dt.dt.year
     return df

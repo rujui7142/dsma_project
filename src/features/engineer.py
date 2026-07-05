@@ -45,6 +45,7 @@ from src.features.domain import (
     learn_zone_fare_std,
     add_zone_fare_std,
 )
+from src.features.holidays import add_holiday_features
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,7 @@ NUMERIC_FEATURES: List[str] = [
     # --- time (raw) ---
     "pickup_hour",
     "pickup_dayofweek",
+    "pickup_day",
     "pickup_month",
     # --- time (cyclic) ---
     "hour_sin",
@@ -116,6 +118,18 @@ NUMERIC_FEATURES: List[str] = [
     "is_bronx_do",
     "is_outer_borough_pu",
     "is_outer_borough_do",
+    # --- holidays ---
+    "is_holiday",
+    "is_major_holiday",
+    "is_federal_holiday",
+    "is_christian_holiday",
+    "is_jewish_holiday",
+    "is_muslim_holiday",
+    "is_other_cultural_holiday",
+    "days_to_nearest_holiday",
+    "jewish_holiday_x_brooklyn",
+    "muslim_holiday_x_queens",
+    "cultural_holiday_x_queens",
     # --- surcharge estimates ---
     "congestion_surcharge_est",
     "cbd_fee_est",
@@ -206,6 +220,16 @@ def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     df["overnight_x_distance"] = df["is_overnight"] * df["trip_distance"]
     df["night_x_airport"] = df["is_overnight"] * df["is_airport_route"]
     df["longtrip_x_airport"] = df["is_long_trip"] * df["is_airport_route"]
+    # Borough x religious/cultural-holiday interactions — domain priors on
+    # which NYC communities are concentrated where (not measured demographic
+    # data): Brooklyn has the city's largest Orthodox/Hasidic Jewish
+    # population (Borough Park, Williamsburg, Crown Heights); Queens has large
+    # South Asian/Middle Eastern Muslim communities (Jackson Heights, Astoria,
+    # Richmond Hill) and the Flushing Chinese community relevant to Diwali/
+    # Lunar New Year. Left for SHAP/feature-selection to validate or reject.
+    df["jewish_holiday_x_brooklyn"] = df["is_jewish_holiday"] * (df["is_brooklyn_pu"] | df["is_brooklyn_do"])
+    df["muslim_holiday_x_queens"] = df["is_muslim_holiday"] * (df["is_queens_pu"] | df["is_queens_do"])
+    df["cultural_holiday_x_queens"] = df["is_other_cultural_holiday"] * (df["is_queens_pu"] | df["is_queens_do"])
     return df
 
 
@@ -292,7 +316,8 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         df = add_time_surcharges(df)
         df = add_estimated_charges_total(df)
         df = add_metered_fare_estimate(df)   # needs estimated_surcharges
-        df = _add_interaction_features(df)   # needs zone/time/cbd flags
+        df = add_holiday_features(df)        # needs pickup_year/month/day
+        df = _add_interaction_features(df)   # needs zone/time/cbd/holiday flags
 
         # 2. Learned zone popularity + route stats + zone fare std + one-hot
         df = add_zone_popularity(df, self._pu_freq, self._do_freq)
