@@ -166,24 +166,24 @@ def filter_pickup_date_range(df: pd.DataFrame, min_year: int, verbose: bool = Tr
 # ---------------------------------------------------------------------------
 
 def clean_training_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Base cleaning pipeline shared by train and val/test alike.
+    """Full cleaning pipeline for 2024–2025 training data."""
+    df = drop_na_in_inputs(df)
+    df = add_datetime_features(df)
+    df = filter_pickup_date_range(df, CLEANING["min_pickup_year"])
+    df = compute_trip_duration(df)
+    df = compute_target(df)
+    df = filter_valid_trips(df)
+    df = filter_outliers(
+        df,
+        cols=["trip_distance", "trip_duration_min", TARGET_COL],
+        upper_pct=CLEANING["outlier_percentile"],
+    )
+    df = filter_fare_efficiency_outliers(df, threshold=CLEANING["fare_efficiency_zscore"])
+    return df.reset_index(drop=True)
 
-    Deliberately does NOT include filter_outliers (the 99th-percentile
-    distance/duration/fare trim): unlike the other steps here, which remove
-    rows that are provably corrupt (missing inputs, impossible values, bad
-    timestamps, physically-impossible fare/distance/duration combinations),
-    the percentile filter trims a distributional TAIL that can contain
-    genuinely valid rare trips. Applying it uniformly before any train/val
-    split would (a) let the model be evaluated on an artificially easier,
-    pre-trimmed validation distribution instead of the real tail it'll face
-    in production, and (b) compute the percentile threshold from data spanning
-    the whole dataset -- including, for early CV folds, months that are
-    chronologically in the "future" relative to that fold's training window.
-    Callers that do a train/val split (analyze.py, train.py, select_features.py,
-    sweep.py) instead call filter_outliers on the TRAIN portion only, per
-    split/fold, so the threshold is fit only on that fold's own training data
-    and validation is scored against the untrimmed real distribution.
-    """
+
+def clean_test_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Cleaning pipeline for 2026 test data (same logic, no train-only assertions)."""
     df = drop_na_in_inputs(df)
     df = add_datetime_features(df)
     df = filter_pickup_date_range(df, CLEANING["min_pickup_year"])
@@ -192,12 +192,3 @@ def clean_training_data(df: pd.DataFrame) -> pd.DataFrame:
     df = filter_valid_trips(df)
     df = filter_fare_efficiency_outliers(df, threshold=CLEANING["fare_efficiency_zscore"])
     return df.reset_index(drop=True)
-
-
-def clean_test_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Cleaning pipeline for the 2026 test set. Identical to clean_training_data:
-    the test set is never split into a train/val pair, so there's no "train
-    portion" to fit a percentile filter_outliers threshold on -- the real,
-    untrimmed test distribution is exactly what we want to score against.
-    """
-    return clean_training_data(df)

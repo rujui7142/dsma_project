@@ -29,10 +29,10 @@ import numpy as np
 import pandas as pd
 
 from src.config import (
-    DATA_PATHS, SAMPLE_CONFIG, TARGET_COL, LOGS_DIR, WANDB_PROJECT, CLEANING,
+    DATA_PATHS, SAMPLE_CONFIG, TARGET_COL, LOGS_DIR, WANDB_PROJECT,
 )
 from src.data.loader import load_parquet_files, load_taxi_zones
-from src.data.cleaner import clean_training_data, filter_outliers
+from src.data.cleaner import clean_training_data
 from src.features.engineer import FeatureEngineer, get_raw_input_features
 from src.models.trainer import train_model, build_ridge_scaler
 from src.models.shap_analysis import (
@@ -101,13 +101,6 @@ def main():
     all_features = None
 
     for fold, tr_df, vl_df in forward_chain_splits(clean_df, n_splits=5):
-        # Percentile outlier trim: train-only, fit on this fold's own training
-        # window -- val is scored against the real, untrimmed distribution
-        # (see clean_training_data's docstring for the rationale).
-        tr_df = filter_outliers(
-            tr_df, cols=["trip_distance", "trip_duration_min", TARGET_COL],
-            upper_pct=CLEANING["outlier_percentile"],
-        )
         fold_labels.append(f"F{fold + 1}")
         X_tr_raw, X_vl_raw = get_raw_input_features(tr_df), get_raw_input_features(vl_df)
         y_tr = tr_df[TARGET_COL].reset_index(drop=True)
