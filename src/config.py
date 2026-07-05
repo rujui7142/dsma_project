@@ -63,21 +63,20 @@ TLC_RULES = {
     "improvement_surcharge": 1.00,
     "congestion_surcharge": 2.50,  # NYS congestion surcharge, Manhattan south of 96th St (Yellow Zone)
     "airport_fee": 1.75,  # pickup at JFK or LGA only
-    # CRZ per-trip charge, Manhattan south of 60th St, from 2025-01-05.
-    # CORRECTED 9.00 -> 0.75: the $9 figure is the base congestion toll for
-    # PRIVATE passenger vehicles. Yellow taxis are exempt from that toll and
-    # instead pass a flat $0.75 per-trip charge to the passenger (high-volume
-    # FHVs like Uber pay $1.50). This dataset is yellow-taxi trips, so $0.75
-    # is what actually appears in total_amount. The old $9.00 inflated
-    # cbd_fee_est / estimated_surcharges / est_metered_fare by ~$8.25 on every
-    # post-2025 Manhattan trip -- the main driver of the fold-3 overprediction.
-    # NOTE: the CRZ boundary is 60th St, but we proxy it with the Yellow Zone
-    # (96th St) service-zone flag, so a band between 60th-96th St is
-    # over-attributed the $0.75; small given the corrected magnitude.
+    # CRZ per-trip charge, Manhattan at/south of 60th St (config.CBD_ZONES,
+    # is_cbd_pu/do), from 2025-01-05. CORRECTED 9.00 -> 0.75: the $9 figure is
+    # the base congestion toll for PRIVATE passenger vehicles. Yellow taxis
+    # are exempt from that toll and instead pass a flat $0.75 per-trip charge
+    # to the passenger (high-volume FHVs like Uber pay $1.50). This dataset
+    # is yellow-taxi trips, so $0.75 is what actually appears in total_amount.
     "cbd_congestion_fee": 0.75,
-    # Time extras (approximate)
-    "extra_rush_hour": 1.00,  # weekdays 16:00-20:00
-    "extra_overnight": 0.50,  # 20:00-06:00
+    # Time extras. CORRECTED via web search against the current official TLC
+    # rate card (nyc.gov/site/tlc/passengers/taxi-fare.page): both were stale
+    # by roughly one prior rate-increase cycle. These have been wrong for the
+    # ENTIRE 2024-2025 dataset (not just post-2025), so unlike the CBD fee bug
+    # this is a uniform bias across all folds, not a temporal-drift driver.
+    "extra_rush_hour": 2.50,  # weekdays 16:00-20:00 (was 1.00)
+    "extra_overnight": 1.00,  # 20:00-06:00 (was 0.50)
     # Zone IDs
     "jfk_zone_id": 132,
     "lga_zone_id": 138,
