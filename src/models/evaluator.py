@@ -69,7 +69,7 @@ def error_analysis(
     segment_cols = [
         "pu_borough", "pickup_hour", "distance_bin", "pickup_dayofweek",
         "is_airport_route", "is_hotspot_route", "is_west_village_route",
-        "crosses_cbd", "fully_within_cbd",
+        "crosses_cbd", "fully_within_cbd", "is_major_holiday", "is_holiday",
     ]
     analyses = {}
     for col in segment_cols:
