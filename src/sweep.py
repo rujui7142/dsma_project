@@ -261,7 +261,7 @@ def main():
     y_val = val_df[TARGET_COL].reset_index(drop=True)
 
     engineer = FeatureEngineer(zones_df)
-    engineer.fit(X_train_raw, y_train)
+    engineer.fit(X_train_raw, y_train, duration=train_df["trip_duration_min"].reset_index(drop=True))
 
     _X_TRAIN = engineer.get_tree_features(engineer.transform(X_train_raw))
     _X_VAL = engineer.get_tree_features(engineer.transform(X_val_raw))

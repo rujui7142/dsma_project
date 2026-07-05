@@ -107,7 +107,7 @@ def main():
         y_vl = vl_df[TARGET_COL].reset_index(drop=True)
 
         eng = FeatureEngineer(zones_df)
-        eng.fit(X_tr_raw, y_tr)
+        eng.fit(X_tr_raw, y_tr, duration=tr_df["trip_duration_min"].reset_index(drop=True))
         X_tr = eng.get_tree_features(eng.transform(X_tr_raw))
         X_vl = eng.get_tree_features(eng.transform(X_vl_raw))
         all_features = list(X_tr.columns)

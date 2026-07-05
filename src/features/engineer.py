@@ -44,6 +44,7 @@ from src.features.domain import (
     add_top_zone_onehot,
     learn_route_stats,
     add_route_features,
+    add_route_duration_feature,
     learn_zone_fare_std,
     add_zone_fare_std,
 )
@@ -199,6 +200,7 @@ NUMERIC_FEATURES: List[str] = [
     "pu_zone_std_fare",
     "do_zone_std_fare",
     "route_mean_fare",
+    "route_mean_duration_min",
     # --- encoded booleans from zone lookup ---
     "pu_borough_enc",
     "do_borough_enc",
@@ -308,16 +310,29 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         self._route_freq: Optional[pd.Series] = None
         self._pu_std: Optional[pd.Series] = None
         self._do_std: Optional[pd.Series] = None
+        # Learned route-level MEAN DURATION (leak-free proxy for time-based
+        # fare component -- see add_route_duration_feature)
+        self._route_duration_te: Optional[pd.Series] = None
+        self._global_mean_duration: float = 0.0
 
     # ------------------------------------------------------------------
 
-    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "FeatureEngineer":
+    def fit(
+        self,
+        X: pd.DataFrame,
+        y: Optional[pd.Series] = None,
+        duration: Optional[pd.Series] = None,
+    ) -> "FeatureEngineer":
         """Fit all supervised encodings on the training fold (leak-free).
 
         Parameters
         ----------
         X : raw input DataFrame (must contain PULocationID, DOLocationID).
         y : training target (total_fare_amount). If None, encodings default to 0.
+        duration : this fold's trip_duration_min (same row order as X), used
+            ONLY to fit a route-level mean-duration lookup (never as a
+            per-trip input -- see add_route_duration_feature). If None,
+            route_mean_duration_min falls back to a constant 0.0.
         """
         if y is not None:
             tmp = X[["PULocationID", "DOLocationID"]].copy()
@@ -330,6 +345,11 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                 X, y, ROUTE_TE_SMOOTHING
             )
             self._pu_std, self._do_std = learn_zone_fare_std(X, y)
+
+        if duration is not None:
+            self._route_duration_te, _, self._global_mean_duration = learn_route_stats(
+                X, duration, ROUTE_TE_SMOOTHING
+            )
 
         # Learn zone popularity from training-data frequency only (no target,
         # so this is leak-free). Unseen zones at transform time map to 0.
@@ -374,6 +394,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         # 2. Learned zone popularity + route stats + zone fare std + one-hot
         df = add_zone_popularity(df, self._pu_freq, self._do_freq)
         df = add_route_features(df, self._route_te, self._route_freq, self._global_mean)
+        df = add_route_duration_feature(df, self._route_duration_te, self._global_mean_duration)
         df = add_zone_fare_std(df, self._pu_std, self._do_std)
         df = add_top_zone_onehot(df, self._top_pu_zones, self._onehot_cols)
 

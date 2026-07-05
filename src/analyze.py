@@ -139,7 +139,7 @@ def _monthly_temporal_analysis(
         y_vl = vl_df[TARGET_COL].reset_index(drop=True)
 
         eng = FeatureEngineer(zones_df)
-        eng.fit(X_tr_raw, y_tr)
+        eng.fit(X_tr_raw, y_tr, duration=tr_df["trip_duration_min"].reset_index(drop=True))
         X_tr_feat = eng.get_tree_features(eng.transform(X_tr_raw))
         X_vl_feat = eng.get_tree_features(eng.transform(X_vl_raw))
         scaler = build_ridge_scaler(X_tr_feat) if champion == "ridge" else None
@@ -198,7 +198,7 @@ def main():
         y_vl = vl_df[TARGET_COL].reset_index(drop=True)
 
         engineer = FeatureEngineer(zones_df)
-        engineer.fit(X_tr_raw, y_tr)
+        engineer.fit(X_tr_raw, y_tr, duration=tr_df["trip_duration_min"].reset_index(drop=True))
         X_tr_eng = engineer.transform(X_tr_raw)
         X_vl_eng = engineer.transform(X_vl_raw)
         X_tr_feat = engineer.get_tree_features(X_tr_eng)

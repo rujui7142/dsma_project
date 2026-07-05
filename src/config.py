@@ -334,6 +334,7 @@ MONOTONIC_INCREASING_FEATURES = [
     "extra_est",
     "estimated_surcharges",
     "route_mean_fare",
+    "route_mean_duration_min",
     "pu_zone_mean_fare",
     "do_zone_mean_fare",
 ]

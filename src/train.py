@@ -168,7 +168,7 @@ def main():
         y_vl = vl_df[TARGET_COL].reset_index(drop=True)
 
         fold_eng = FeatureEngineer(zones_df)
-        fold_eng.fit(X_tr_raw, y_tr)
+        fold_eng.fit(X_tr_raw, y_tr, duration=tr_df["trip_duration_min"].reset_index(drop=True))
         X_tr_feat = fold_eng.get_tree_features(fold_eng.transform(X_tr_raw))
         X_vl_feat = fold_eng.get_tree_features(fold_eng.transform(X_vl_raw))
 
@@ -213,7 +213,7 @@ def main():
     y_val = val_df[TARGET_COL].reset_index(drop=True)
 
     engineer = FeatureEngineer(zones_df)
-    engineer.fit(X_train_raw, y_train)
+    engineer.fit(X_train_raw, y_train, duration=train_df["trip_duration_min"].reset_index(drop=True))
 
     X_train_eng = engineer.transform(X_train_raw)
     X_val_eng = engineer.transform(X_val_raw)

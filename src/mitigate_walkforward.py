@@ -138,7 +138,7 @@ def main():
     y_fit = init_fit_df[TARGET_COL].reset_index(drop=True)
 
     engineer = FeatureEngineer(zones_df)
-    engineer.fit(X_fit_raw, y_fit)
+    engineer.fit(X_fit_raw, y_fit, duration=init_fit_df["trip_duration_min"].reset_index(drop=True))
 
     def _featurize(df):
         X_raw = get_raw_input_features(df)

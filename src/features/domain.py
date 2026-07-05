@@ -336,6 +336,35 @@ def add_route_features(
     return df
 
 
+def add_route_duration_feature(
+    df: pd.DataFrame,
+    route_duration_te: Optional[pd.Series],
+    global_mean_duration: float,
+) -> pd.DataFrame:
+    """Map a learned route-level MEAN duration -- a leak-free proxy for "how
+    long does this route typically take" (distance, bridges/tunnels, typical
+    congestion all baked in), fit via learn_route_stats on trip_duration_min
+    from the TRAINING fold only (identical smoothed-target-encoding machinery
+    as route_mean_fare, just keyed on duration instead of fare).
+
+    This is deliberately NOT the current trip's own duration -- that's never
+    available at booking time (see add_metered_fare_estimate's docstring on
+    why using it directly would be target leakage). A HISTORICAL AVERAGE for
+    that (PU, DO) pair is exactly as leak-free as route_mean_fare itself
+    (same reasoning, same function), and gives the model a genuine handle on
+    the TLC rate card's time-based ("$0.70 per 60 seconds when slow or
+    stopped") fare component that per-trip duration itself cannot supply
+    without leaking. Unseen routes -> global mean duration.
+    """
+    df = df.copy()
+    if route_duration_te is not None:
+        key = _route_key(df)
+        df["route_mean_duration_min"] = key.map(route_duration_te).fillna(global_mean_duration)
+    else:
+        df["route_mean_duration_min"] = global_mean_duration
+    return df
+
+
 def learn_zone_fare_std(X: pd.DataFrame, y: pd.Series) -> Tuple[pd.Series, pd.Series]:
     """Per-zone fare dispersion (std) for PU and DO."""
     df = X[["PULocationID", "DOLocationID"]].copy()
