@@ -19,6 +19,7 @@ from src.config import (
 _JFK = TLC_RULES["jfk_zone_id"]
 _LGA = TLC_RULES["lga_zone_id"]
 _EWR = TLC_RULES["ewr_zone_id"]
+_OUTSIDE_NYC = TLC_RULES["outside_nyc_zone_id"]
 _CBD_YEAR = TLC_RULES["cbd_start_year"]
 _WEST_VILLAGE = set(WEST_VILLAGE_ZONES)
 _HOTSPOTS = set(HOTSPOT_ZONES)
@@ -50,6 +51,12 @@ def add_zone_features(df: pd.DataFrame, zones_df: pd.DataFrame) -> pd.DataFrame:
     df["is_cbd_pu"] = df["PULocationID"].isin(_CBD_ZONES).astype(np.int8)
     df["is_cbd_do"] = df["DOLocationID"].isin(_CBD_ZONES).astype(np.int8)
     df["is_cross_borough"] = (df["pu_borough"] != df["do_borough"]).astype(np.int8)
+    # Zone 265 ("Outside of NYC") -- Westchester/Nassau/further counties, see
+    # TLC_RULES["outside_nyc_zone_id"] for why this is a single flag rather
+    # than a precise double-rate/negotiated-flat-fare formula.
+    df["is_outside_nyc_pu"] = (df["PULocationID"] == _OUTSIDE_NYC).astype(np.int8)
+    df["is_outside_nyc_do"] = (df["DOLocationID"] == _OUTSIDE_NYC).astype(np.int8)
+    df["is_outside_nyc_route"] = (df["is_outside_nyc_pu"] | df["is_outside_nyc_do"]).astype(np.int8)
 
     # Encode string categoricals to stable integers (same mapping at inference)
     df["pu_borough_enc"] = df["pu_borough"].map(BOROUGH_MAP).fillna(BOROUGH_MAP["Unknown"]).astype(np.int8)
@@ -65,10 +72,16 @@ def add_zone_features(df: pd.DataFrame, zones_df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def add_airport_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Flag airport trips and estimate the $1.75 airport pickup fee.
+    """Flag airport trips and estimate the airport-specific fees/surcharges.
 
-    - airport_fee ($1.75) applies only when picked up at JFK (132) or LGA (138).
-    - JFK flat-rate routes (rate code 2) are identified by zone 132 on either end.
+    - airport_fee ($2.00 Airport Access Fee) applies only when picked up at
+      JFK (132) or LGA (138).
+    - lga_surcharge ($5.00) applies for LGA on EITHER end -- additive with
+      airport_fee, not a replacement for it.
+    - ewr_surcharge ($20.00 Newark Surcharge) applies on EWR dropoff.
+    - JFK flat-rate routes (rate code 2) are handled separately in
+      add_jfk_manhattan_flat_route (needs pu_borough/do_borough, computed
+      later in the pipeline).
     """
     df = df.copy()
     df["is_jfk_pu"] = (df["PULocationID"] == _JFK).astype(np.int8)
@@ -78,11 +91,36 @@ def add_airport_features(df: pd.DataFrame) -> pd.DataFrame:
     df["is_ewr_do"] = (df["DOLocationID"] == _EWR).astype(np.int8)
 
     df["is_airport_pickup"] = (df["is_jfk_pu"] | df["is_lga_pu"]).astype(np.int8)
+    df["is_lga_route"] = (df["is_lga_pu"] | df["is_lga_do"]).astype(np.int8)
     df["is_airport_route"] = (
         df["is_jfk_pu"] | df["is_lga_pu"] | df["is_jfk_do"] | df["is_lga_do"]
     ).astype(np.int8)
 
     df["airport_fee_est"] = df["is_airport_pickup"].astype(float) * TLC_RULES["airport_fee"]
+    df["lga_surcharge_est"] = df["is_lga_route"].astype(float) * TLC_RULES["lga_surcharge"]
+    df["ewr_surcharge_est"] = df["is_ewr_do"].astype(float) * TLC_RULES["ewr_surcharge"]
+    return df
+
+
+# ---------------------------------------------------------------------------
+# JFK<->Manhattan flat rate ("Rate #2 - JFK Airport")
+# ---------------------------------------------------------------------------
+
+def add_jfk_manhattan_flat_route(df: pd.DataFrame) -> pd.DataFrame:
+    """Flag the JFK<->Manhattan flat-rate route: $70 REPLACES the metered
+    base fare entirely, in either direction (surcharges still apply on top --
+    see add_metered_fare_estimate / add_time_surcharges). Trips between JFK
+    and any OTHER NYC destination are standard metered fare, not flat, so
+    this is deliberately scoped to Manhattan specifically, not "any JFK trip".
+
+    Requires pu_borough/do_borough (add_zone_features) and is_jfk_pu/is_jfk_do
+    (add_airport_features) to already be present.
+    """
+    df = df.copy()
+    df["is_jfk_manhattan_flat_route"] = (
+        (df["is_jfk_pu"].astype(bool) & (df["do_borough"] == "Manhattan"))
+        | (df["is_jfk_do"].astype(bool) & (df["pu_borough"] == "Manhattan"))
+    ).astype(np.int8)
     return df
 
 
@@ -140,13 +178,28 @@ def add_borough_flags(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def add_metered_fare_estimate(df: pd.DataFrame) -> pd.DataFrame:
-    """Rough metered-fare estimate = base + per_mile*distance + surcharges."""
+    """Metered-fare estimate = base + per_mile*distance + surcharges, EXCEPT
+    JFK<->Manhattan flat-rate routes, where the $70 flat fare (TLC_RULES
+    ["jfk_manhattan_flat_fare"]) replaces the distance-based base entirely
+    (surcharges still apply on top, same as every other route). Requires
+    estimated_surcharges (add_estimated_charges_total) and
+    is_jfk_manhattan_flat_route (add_jfk_manhattan_flat_route).
+
+    Note: the TLC rate card also bills $0.70 per 60 seconds when moving
+    below 12mph or stopped (in addition to the $0.70-per-1/5-mile rate when
+    moving faster) -- i.e. part of the metered fare is time-based, not just
+    distance-based. That component is deliberately NOT modeled here: it
+    would require trip_duration, which is only known AFTER a trip completes
+    and is excluded from RAW_INPUT_COLS for exactly that reason (this is a
+    booking-time fare estimator) -- using it would be target leakage, not a
+    missing feature.
+    """
     df = df.copy()
-    df["est_metered_fare"] = (
-        METERED_FARE["base"]
-        + METERED_FARE["per_mile"] * df["trip_distance"]
-        + df["estimated_surcharges"]
-    )
+    metered_base = METERED_FARE["base"] + METERED_FARE["per_mile"] * df["trip_distance"]
+    if "is_jfk_manhattan_flat_route" in df.columns:
+        is_flat = df["is_jfk_manhattan_flat_route"].astype(bool)
+        metered_base = np.where(is_flat, TLC_RULES["jfk_manhattan_flat_fare"], metered_base)
+    df["est_metered_fare"] = metered_base + df["estimated_surcharges"]
     return df
 
 
@@ -367,18 +420,29 @@ def add_time_surcharges(df: pd.DataFrame) -> pd.DataFrame:
     """Estimate rush-hour and overnight extras plus fixed per-trip charges.
 
     NYC TLC extras:
-      - $1.00 rush-hour surcharge:  weekdays 16:00–20:00
-      - $0.50 overnight surcharge:  20:00–06:00
+      - $2.50 rush-hour surcharge: weekdays 16:00-20:00, EXCLUDING legal
+        holidays (requires is_legal_holiday from add_holiday_features).
+      - $1.00 overnight surcharge: 20:00-06:00
       - MTA tax $0.50 (all metered trips)
       - Improvement surcharge $1.00 (all metered trips)
+
+    JFK<->Manhattan flat-rate trips (is_jfk_manhattan_flat_route) use their
+    OWN $5.00 rush-hour surcharge instead of the standard $2.50, and the rate
+    card lists no overnight surcharge at all for that flat rate -- so both
+    are special-cased here when that flag is present.
     """
     df = df.copy()
     hour = df["pickup_hour"]
     dow = df["pickup_dayofweek"]
 
     is_weekday = (dow < 5)
+    is_legal_holiday = (
+        df["is_legal_holiday"].astype(bool) if "is_legal_holiday" in df.columns
+        else pd.Series(False, index=df.index)
+    )
     is_rush = (
         is_weekday
+        & ~is_legal_holiday
         & hour.between(TLC_RULES["rush_hour_start"], TLC_RULES["rush_hour_end"] - 1)
     )
     is_overnight = (hour >= TLC_RULES["overnight_start"]) | (hour < TLC_RULES["overnight_end"])
@@ -386,9 +450,16 @@ def add_time_surcharges(df: pd.DataFrame) -> pd.DataFrame:
     df["is_rush_hour"] = is_rush.astype(np.int8)
     df["is_overnight"] = is_overnight.astype(np.int8)
 
+    is_jfk_flat = (
+        df["is_jfk_manhattan_flat_route"].astype(bool) if "is_jfk_manhattan_flat_route" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    rush_rate = np.where(is_jfk_flat, TLC_RULES["jfk_manhattan_rush_surcharge"], TLC_RULES["extra_rush_hour"])
+    applies_overnight = (~is_rush) & is_overnight & (~is_jfk_flat)
+
     df["extra_est"] = (
-        is_rush.astype(float) * TLC_RULES["extra_rush_hour"]
-        + (~is_rush & is_overnight).astype(float) * TLC_RULES["extra_overnight"]
+        is_rush.astype(float) * rush_rate
+        + applies_overnight.astype(float) * TLC_RULES["extra_overnight"]
     )
     df["mta_tax_est"] = TLC_RULES["mta_tax"]
     df["improvement_surcharge_est"] = TLC_RULES["improvement_surcharge"]
@@ -404,6 +475,8 @@ def add_estimated_charges_total(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["estimated_surcharges"] = (
         df["airport_fee_est"]
+        + df["lga_surcharge_est"]
+        + df["ewr_surcharge_est"]
         + df["congestion_surcharge_est"]
         + df["cbd_fee_est"]
         + df["extra_est"]

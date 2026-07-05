@@ -69,7 +69,30 @@ TLC_RULES = {
     "mta_tax": 0.50,
     "improvement_surcharge": 1.00,
     "congestion_surcharge": 2.50,  # NYS congestion surcharge, Manhattan south of 96th St (Yellow Zone)
-    "airport_fee": 1.75,  # pickup at JFK or LGA only
+    # Airport Access Fee: pickup at JFK or LGA only. CORRECTED 1.75 -> 2.00
+    # against the current official rate card (nyc.gov/site/tlc/passengers/
+    # taxi-fare.page) -- was stale by one prior rate-increase cycle, same
+    # issue as extra_rush_hour/extra_overnight below.
+    "airport_fee": 2.00,
+    # LGA-specific: "Trips to and from LaGuardia Airport are charged the
+    # standard metered fare, plus a $5.00 surcharge" -- applies for LGA on
+    # EITHER end (pickup or dropoff), distinct from and additive with the
+    # $2.00 Airport Access Fee above (which is pickup-only).
+    "lga_surcharge": 5.00,
+    # Newark Surcharge: "Trips to Newark Airport (EWR): Standard metered
+    # fare, plus $20.00 Newark Surcharge" -- dropoff at EWR only (the rate
+    # card only documents this direction).
+    "ewr_surcharge": 20.00,
+    # JFK<->Manhattan flat rate ("Rate #2 - JFK Airport"), either direction:
+    # $70 REPLACES the distance/time-metered base fare entirely (surcharges
+    # below still apply additively on top). Trips between JFK and any OTHER
+    # NYC destination are standard metered fare (not flat) -- see
+    # domain.add_jfk_manhattan_flat_route for the exact route condition.
+    "jfk_manhattan_flat_fare": 70.00,
+    # The JFK flat-rate page lists its own rush-hour surcharge ($5, not the
+    # standard $2.50) and no overnight surcharge at all -- see
+    # domain.add_time_surcharges.
+    "jfk_manhattan_rush_surcharge": 5.00,
     # CRZ per-trip charge, Manhattan at/south of 60th St (config.CBD_ZONES,
     # is_cbd_pu/do), from 2025-01-05. CORRECTED 9.00 -> 0.75: the $9 figure is
     # the base congestion toll for PRIVATE passenger vehicles. Yellow taxis
@@ -82,12 +105,23 @@ TLC_RULES = {
     # by roughly one prior rate-increase cycle. These have been wrong for the
     # ENTIRE 2024-2025 dataset (not just post-2025), so unlike the CBD fee bug
     # this is a uniform bias across all folds, not a temporal-drift driver.
-    "extra_rush_hour": 2.50,  # weekdays 16:00-20:00 (was 1.00)
+    "extra_rush_hour": 2.50,  # weekdays 16:00-20:00, excluding legal holidays (was 1.00)
     "extra_overnight": 1.00,  # 20:00-06:00 (was 0.50)
     # Zone IDs
     "jfk_zone_id": 132,
     "lga_zone_id": 138,
     "ewr_zone_id": 1,
+    # "Outside of NYC" catch-all zone (taxi_zone_lookup.csv id 265, Borough
+    # "N/A") -- conflates two distinct real-world rate regimes we can't tell
+    # apart from zone ID alone: Rate #04 (Westchester/Nassau, metered fare
+    # DOUBLED for the portion beyond city limits -- but we only have a single
+    # aggregate trip_distance/duration, not a within-city/beyond-city split)
+    # and Rate #05 (further counties, a fully negotiated flat fare with no
+    # formula at all). Modeled as a single flag (domain.is_outside_nyc_*) and
+    # left for the model to learn an empirical average adjustment from
+    # historical fares, rather than hard-coding a distance-doubling formula
+    # we cannot correctly bound from the data we have.
+    "outside_nyc_zone_id": 265,
     # Temporal rules
     "cbd_start_year": 2025,
     "rush_hour_start": 16,
@@ -253,7 +287,7 @@ _HOLIDAY_RELIGION_NAMES = ["christian", "jewish", "muslim", "other_cultural"]
 # is_post_cbd / cbd_* in monitoring.
 DRIFT_EXCLUDE_FEATURES = [
     "pickup_month", "pickup_year", "month_sin", "month_cos", "days_to_nearest_holiday",
-    "is_holiday", "is_major_holiday", "is_federal_holiday",
+    "is_holiday", "is_major_holiday", "is_federal_holiday", "is_legal_holiday",
     "is_christian_holiday", "is_jewish_holiday", "is_muslim_holiday", "is_other_cultural_holiday",
     "dxy_level", "sp500_level",
 ] + [
@@ -286,6 +320,8 @@ MONOTONIC_INCREASING_FEATURES = [
     "est_metered_fare",
     "cbd_fee_est",
     "airport_fee_est",
+    "lga_surcharge_est",
+    "ewr_surcharge_est",
     "congestion_surcharge_est",
     "extra_est",
     "estimated_surcharges",

@@ -27,6 +27,7 @@ from src.config import (
 from src.features.domain import (
     add_zone_features,
     add_airport_features,
+    add_jfk_manhattan_flat_route,
     add_hotspot_features,
     add_cbd_crossing,
     add_borough_flags,
@@ -90,6 +91,10 @@ NUMERIC_FEATURES: List[str] = [
     "is_airport_pickup",
     "is_airport_route",
     "airport_fee_est",
+    "is_lga_route",
+    "lga_surcharge_est",
+    "ewr_surcharge_est",
+    "is_jfk_manhattan_flat_route",
     # --- hotspot / high-demand zones ---
     "is_west_village_pu",
     "is_west_village_do",
@@ -112,6 +117,9 @@ NUMERIC_FEATURES: List[str] = [
     "fully_within_cbd",
     "enters_cbd",
     "exits_cbd",
+    "is_outside_nyc_pu",
+    "is_outside_nyc_do",
+    "is_outside_nyc_route",
     # --- borough-specific (weak-segment handles) ---
     "is_brooklyn_pu",
     "is_brooklyn_do",
@@ -127,6 +135,7 @@ NUMERIC_FEATURES: List[str] = [
     "is_holiday",
     "is_major_holiday",
     "is_federal_holiday",
+    "is_legal_holiday",
     "is_christian_holiday",
     "is_jewish_holiday",
     "is_muslim_holiday",
@@ -180,6 +189,7 @@ NUMERIC_FEATURES: List[str] = [
     "overnight_x_distance",
     "night_x_airport",
     "longtrip_x_airport",
+    "distance_x_jfk_flat",
     # --- target encoding ---
     "pu_zone_mean_fare",
     "do_zone_mean_fare",
@@ -248,6 +258,11 @@ def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     df["overnight_x_distance"] = df["is_overnight"] * df["trip_distance"]
     df["night_x_airport"] = df["is_overnight"] * df["is_airport_route"]
     df["longtrip_x_airport"] = df["is_long_trip"] * df["is_airport_route"]
+    # Residual distance signal within the JFK<->Manhattan flat-rate regime
+    # (real fares there aren't PERFECTLY flat -- mean $72, std $11 in our
+    # 2026 test data -- so let the tree use distance to explain that residual
+    # instead of forcing every flat-route trip to an identical prediction).
+    df["distance_x_jfk_flat"] = df["trip_distance"] * df["is_jfk_manhattan_flat_route"]
     # Borough x religious/cultural-holiday interactions — full, unbiased cross
     # product of all 5 boroughs x all 4 holiday-religion categories. No prior
     # assumption about which borough is "affected" by which holiday (e.g.
@@ -334,19 +349,23 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         df = _add_distance_features(df)
         df = add_trip_shape(df)
         df = add_extra_time_flags(df)
+        # Moved before add_time_surcharges (needs pickup_year/month/day only,
+        # which are raw inputs available from the start) -- add_time_surcharges
+        # needs is_legal_holiday to gate the rush-hour surcharge correctly.
+        df = add_holiday_features(df)
         df = add_zone_features(df, self.zones_df)
         df = add_borough_flags(df)           # needs pu_borough / do_borough
         df = add_airport_features(df)
+        df = add_jfk_manhattan_flat_route(df)  # needs pu/do_borough + is_jfk_pu/do
         df = add_hotspot_features(df)
         df = add_cbd_crossing(df)            # needs is_yellow_zone_* from zone features
         df = add_congestion_surcharge(df)
         df = add_cbd_fee(df)                 # sets is_post_cbd
-        df = add_time_surcharges(df)
+        df = add_time_surcharges(df)         # needs is_jfk_manhattan_flat_route + is_legal_holiday
         df = add_estimated_charges_total(df)
-        df = add_metered_fare_estimate(df)   # needs estimated_surcharges
-        df = add_holiday_features(df)        # needs pickup_year/month/day
+        df = add_metered_fare_estimate(df)   # needs estimated_surcharges + is_jfk_manhattan_flat_route
         df = add_macro_features(df)          # needs pickup_year/month/day
-        df = _add_interaction_features(df)   # needs zone/time/cbd/holiday flags
+        df = _add_interaction_features(df)   # needs zone/time/cbd/holiday/jfk-flat flags
 
         # 2. Learned zone popularity + route stats + zone fare std + one-hot
         df = add_zone_popularity(df, self._pu_freq, self._do_freq)

@@ -194,10 +194,18 @@ def build_holiday_sets(years: List[int]) -> Dict[str, Set[DateTuple]]:
     muslim = _build_muslim_dates(years)
     other_cultural = _build_other_cultural_dates(years)
 
+    # "Legal holiday" set = federal holidays + Thanksgiving -- the list TLC's
+    # rush-hour-surcharge exemption ("excluding holidays") actually means.
+    # Deliberately NOT the same as "major" (which also includes Halloween and
+    # New Year's Eve -- ordinary business days, not holidays courts/state
+    # offices observe) or "federal" alone (which omits Thanksgiving).
+    legal = set(federal_all) | set(rule_by_name.get("Thanksgiving", []))
+
     return {
         "any": set(fixed_all) | set(all_rule_dates) | christian | jewish | muslim | other_cultural,
         "major": set(major_all),
         "federal": set(federal_all),
+        "legal": legal,
         "christian": christian,
         "jewish": jewish,
         "muslim": muslim,
@@ -222,6 +230,7 @@ def add_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
     df["is_holiday"] = np.fromiter((k in _HOLIDAY_SETS["any"] for k in keys), dtype=np.int8, count=len(keys))
     df["is_major_holiday"] = np.fromiter((k in _HOLIDAY_SETS["major"] for k in keys), dtype=np.int8, count=len(keys))
     df["is_federal_holiday"] = np.fromiter((k in _HOLIDAY_SETS["federal"] for k in keys), dtype=np.int8, count=len(keys))
+    df["is_legal_holiday"] = np.fromiter((k in _HOLIDAY_SETS["legal"] for k in keys), dtype=np.int8, count=len(keys))
     df["is_christian_holiday"] = np.fromiter((k in _HOLIDAY_SETS["christian"] for k in keys), dtype=np.int8, count=len(keys))
     df["is_jewish_holiday"] = np.fromiter((k in _HOLIDAY_SETS["jewish"] for k in keys), dtype=np.int8, count=len(keys))
     df["is_muslim_holiday"] = np.fromiter((k in _HOLIDAY_SETS["muslim"] for k in keys), dtype=np.int8, count=len(keys))
