@@ -124,7 +124,7 @@ class WandbTracker:
         self.entity = entity
         self.enabled = enabled and _WANDB_AVAILABLE
         if enabled and not _WANDB_AVAILABLE:
-            print("[WandbTracker] wandb not installed – tracking disabled.")
+            print("[WandbTracker] wandb not installed - tracking disabled.")
 
     # ------------------------------------------------------------------
 

@@ -184,7 +184,7 @@ def main():
 
     # CV summary table
     cv_summary = {}
-    print("\n  CV summary (mean ± std over folds):")
+    print("\n  CV summary (mean +/- std over folds):")
     print(f"  {'Model':<8}  {'RMSE mean':>10}  {'RMSE std':>9}  {'MAE mean':>9}")
     print("  " + "-" * 44)
     for name in _ALL_MODELS:

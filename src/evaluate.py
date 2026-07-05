@@ -95,7 +95,7 @@ def main():
     metrics = compute_metrics(y_test.values, y_pred)
     print(f"  Test RMSE: {metrics['rmse']:.4f}")
     print(f"  Test MAE:  {metrics['mae']:.4f}")
-    print(f"  Test R²:   {metrics['r2']:.4f}")
+    print(f"  Test R2:   {metrics['r2']:.4f}")
     print(f"  Test MAPE: {metrics['mape']:.2f}%")
 
     # ------------------------------------------------------------------
@@ -130,8 +130,8 @@ def main():
     # ------------------------------------------------------------------
     # 7. Drift detection: 2025 reference vs 2026 test
     # ------------------------------------------------------------------
-    print("\n=== Drift detection (2025 ref → 2026 test) ===")
-    print("  Loading 2025 reference data for drift comparison …")
+    print("\n=== Drift detection (2025 ref -> 2026 test) ===")
+    print("  Loading 2025 reference data for drift comparison ...")
     ref_files = sorted(DATA_PATHS["training"].glob("*2025-1*.parquet"))  # Nov + Dec 2025
     if ref_files:
         ref_raw = pd.concat([pd.read_parquet(f).sample(min(30_000, len(pd.read_parquet(f))), random_state=42)
@@ -155,7 +155,7 @@ def main():
         drift_report["feature_drift"].to_csv(LOGS_DIR / f"feature_drift_{args.tag}.csv", index=False)
     else:
         drift_report = {}
-        print("  No 2025 reference files found – skipping drift analysis.")
+        print("  No 2025 reference files found - skipping drift analysis.")
 
     # ------------------------------------------------------------------
     # 7b. Evidently concept drift (reference vs 2026 test)
