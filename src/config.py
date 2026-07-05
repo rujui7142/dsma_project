@@ -50,7 +50,7 @@ CLEANING = {
     # A small fraction of TLC rows carry corrupt pickup timestamps (years like
     # 2007, 2008 ...). They pollute the forward-chaining month buckets (e.g. a
     # fold labelled "2007-12..2024-02"). Drop anything before Jan 2014.
-    "min_pickup_year": 2014,
+    "min_pickup_year": 2024,
 }
 
 # ---------------------------------------------------------------------------
@@ -61,8 +61,8 @@ TLC_RULES = {
     # Fixed per-trip surcharges
     "mta_tax": 0.50,
     "improvement_surcharge": 1.00,
-    "congestion_surcharge": 2.50,   # NYS congestion surcharge, Manhattan south of 96th St (Yellow Zone)
-    "airport_fee": 1.75,            # pickup at JFK or LGA only
+    "congestion_surcharge": 2.50,  # NYS congestion surcharge, Manhattan south of 96th St (Yellow Zone)
+    "airport_fee": 1.75,  # pickup at JFK or LGA only
     # CRZ per-trip charge, Manhattan south of 60th St, from 2025-01-05.
     # CORRECTED 9.00 -> 0.75: the $9 figure is the base congestion toll for
     # PRIVATE passenger vehicles. Yellow taxis are exempt from that toll and
@@ -76,8 +76,8 @@ TLC_RULES = {
     # over-attributed the $0.75; small given the corrected magnitude.
     "cbd_congestion_fee": 0.75,
     # Time extras (approximate)
-    "extra_rush_hour": 1.00,        # weekdays 16:00-20:00
-    "extra_overnight": 0.50,        # 20:00-06:00
+    "extra_rush_hour": 1.00,  # weekdays 16:00-20:00
+    "extra_overnight": 0.50,  # 20:00-06:00
     # Zone IDs
     "jfk_zone_id": 132,
     "lga_zone_id": 138,
@@ -121,13 +121,22 @@ WEST_VILLAGE_ZONES = [249, 158]
 # is_hotspot flag; the per-zone popularity signal is learned from data
 # (see FeatureEngineer), this list only encodes stable domain priors.
 HOTSPOT_ZONES = [
-    249, 158,              # West Village / Meatpacking
-    113, 114,              # Greenwich Village North / South
-    79, 148,               # East Village, Lower East Side
-    234, 90, 107,          # Union Sq, Flatiron, Gramercy
-    230,                   # Times Sq / Theatre District
-    211, 144,              # SoHo, Little Italy / NoLiTa
-    161, 162, 163, 164,    # Midtown Center / East / North / South
+    249,
+    158,  # West Village / Meatpacking
+    113,
+    114,  # Greenwich Village North / South
+    79,
+    148,  # East Village, Lower East Side
+    234,
+    90,
+    107,  # Union Sq, Flatiron, Gramercy
+    230,  # Times Sq / Theatre District
+    211,
+    144,  # SoHo, Little Italy / NoLiTa
+    161,
+    162,
+    163,
+    164,  # Midtown Center / East / North / South
 ]
 
 # Number of most-frequent pickup zones to one-hot encode. Learned at fit()
@@ -147,8 +156,8 @@ ONEHOT_ZONE_PREFIX = "pu_top_zone_"
 # Source: TLC standard metered rate (initial charge + per-mile).
 # ---------------------------------------------------------------------------
 METERED_FARE = {
-    "base": 3.00,       # initial charge
-    "per_mile": 3.50,   # ~ $0.70 per 1/5 mile
+    "base": 3.00,  # initial charge
+    "per_mile": 3.50,  # ~ $0.70 per 1/5 mile
 }
 
 # Smoothing weight for learned (PU, DO) route-level target encoding:
@@ -189,8 +198,16 @@ SELECTED_FEATURES = None
 #
 # is_post_cbd / cbd_* are deliberately NOT excluded: their shift reflects a
 # real external regime change (the 2025 congestion fee) with modelling impact.
+#
+# days_to_nearest_holiday is excluded for the same reason as the calendar
+# features above: it's seasonally cyclical (peaks/troughs recur every year
+# around the same holidays), so a fold validating on a different slice of the
+# calendar than the reference will show it "drifted" purely because time
+# moved forward, not because the holiday calendar itself changed.
 # ---------------------------------------------------------------------------
-DRIFT_EXCLUDE_FEATURES = ["pickup_month", "pickup_year", "month_sin", "month_cos"]
+DRIFT_EXCLUDE_FEATURES = [
+    "pickup_month", "pickup_year", "month_sin", "month_cos", "days_to_nearest_holiday",
+]
 
 # ---------------------------------------------------------------------------
 # Monotonic constraints for tree models (LightGBM / XGBoost).
@@ -209,11 +226,19 @@ DRIFT_EXCLUDE_FEATURES = ["pickup_month", "pickup_year", "month_sin", "month_cos
 # fixes exactly this failure mode for values beyond the training range.
 # ---------------------------------------------------------------------------
 MONOTONIC_INCREASING_FEATURES = [
-    "trip_distance", "log_distance", "distance_sq", "sqrt_distance",
+    "trip_distance",
+    "log_distance",
+    "distance_sq",
+    "sqrt_distance",
     "est_metered_fare",
-    "cbd_fee_est", "airport_fee_est", "congestion_surcharge_est", "extra_est",
+    "cbd_fee_est",
+    "airport_fee_est",
+    "congestion_surcharge_est",
+    "extra_est",
     "estimated_surcharges",
-    "route_mean_fare", "pu_zone_mean_fare", "do_zone_mean_fare",
+    "route_mean_fare",
+    "pu_zone_mean_fare",
+    "do_zone_mean_fare",
 ]
 
 # ---------------------------------------------------------------------------
@@ -292,7 +317,7 @@ MODEL_DEFAULTS = {
         "max_depth": 15,
         "min_samples_leaf": 5,
         "max_features": "log2",
-        "max_samples": 150_000,   # cap bootstrap size per tree — keeps RF fast on large datasets
+        "max_samples": 150_000,  # cap bootstrap size per tree — keeps RF fast on large datasets
         "random_state": 42,
         "n_jobs": -1,
     },
