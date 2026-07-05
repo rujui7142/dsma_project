@@ -91,6 +91,22 @@ def drop_na_in_inputs(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def filter_pickup_date_range(df: pd.DataFrame, min_year: int, verbose: bool = True) -> pd.DataFrame:
+    """Drop rows with corrupt pickup years earlier than *min_year*.
+
+    Requires pickup_year (added by add_datetime_features). A small fraction of
+    TLC rows carry bad timestamps (e.g. 2007, 2008) that otherwise leak into
+    the forward-chaining month buckets.
+    """
+    before = len(df)
+    df = df[df["pickup_year"] >= min_year].copy()
+    if verbose and len(df) < before:
+        removed = before - len(df)
+        print(f"  filter_pickup_date_range (>= {min_year}): removed {removed:,} rows "
+              f"({removed / before * 100:.2f}%)")
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -99,6 +115,7 @@ def clean_training_data(df: pd.DataFrame) -> pd.DataFrame:
     """Full cleaning pipeline for 2024–2025 training data."""
     df = drop_na_in_inputs(df)
     df = add_datetime_features(df)
+    df = filter_pickup_date_range(df, CLEANING["min_pickup_year"])
     df = compute_trip_duration(df)
     df = compute_target(df)
     df = filter_valid_trips(df)
@@ -114,6 +131,7 @@ def clean_test_data(df: pd.DataFrame) -> pd.DataFrame:
     """Cleaning pipeline for 2026 test data (same logic, no train-only assertions)."""
     df = drop_na_in_inputs(df)
     df = add_datetime_features(df)
+    df = filter_pickup_date_range(df, CLEANING["min_pickup_year"])
     df = compute_trip_duration(df)
     df = compute_target(df)
     df = filter_valid_trips(df)

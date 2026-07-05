@@ -46,6 +46,10 @@ CLEANING = {
     "total_fare_min": 0.01,
     "total_fare_max": 300.0,
     "outlier_percentile": 0.99,
+    # A small fraction of TLC rows carry corrupt pickup timestamps (years like
+    # 2007, 2008 ...). They pollute the forward-chaining month buckets (e.g. a
+    # fold labelled "2007-12..2024-02"). Drop anything before Jan 2014.
+    "min_pickup_year": 2014,
 }
 
 # ---------------------------------------------------------------------------
@@ -56,9 +60,20 @@ TLC_RULES = {
     # Fixed per-trip surcharges
     "mta_tax": 0.50,
     "improvement_surcharge": 1.00,
-    "congestion_surcharge": 2.50,   # for trips in/to Manhattan (Yellow Zone)
+    "congestion_surcharge": 2.50,   # NYS congestion surcharge, Manhattan south of 96th St (Yellow Zone)
     "airport_fee": 1.75,            # pickup at JFK or LGA only
-    "cbd_congestion_fee": 9.00,     # Congestion Relief Zone, from 2025-01-05
+    # CRZ per-trip charge, Manhattan south of 60th St, from 2025-01-05.
+    # CORRECTED 9.00 -> 0.75: the $9 figure is the base congestion toll for
+    # PRIVATE passenger vehicles. Yellow taxis are exempt from that toll and
+    # instead pass a flat $0.75 per-trip charge to the passenger (high-volume
+    # FHVs like Uber pay $1.50). This dataset is yellow-taxi trips, so $0.75
+    # is what actually appears in total_amount. The old $9.00 inflated
+    # cbd_fee_est / estimated_surcharges / est_metered_fare by ~$8.25 on every
+    # post-2025 Manhattan trip -- the main driver of the fold-3 overprediction.
+    # NOTE: the CRZ boundary is 60th St, but we proxy it with the Yellow Zone
+    # (96th St) service-zone flag, so a band between 60th-96th St is
+    # over-attributed the $0.75; small given the corrected magnitude.
+    "cbd_congestion_fee": 0.75,
     # Time extras (approximate)
     "extra_rush_hour": 1.00,        # weekdays 16:00-20:00
     "extra_overnight": 0.50,        # 20:00-06:00
@@ -156,6 +171,25 @@ ROUTE_TE_SMOOTHING = 20.0
 # pruning at the actual training sample size before trusting it.
 # ---------------------------------------------------------------------------
 SELECTED_FEATURES = None
+
+# ---------------------------------------------------------------------------
+# Features excluded from PSI/drift MONITORING (not from the model itself).
+#
+# In forward-chaining CV each fold validates on a LATER calendar window than
+# the fixed reference, so pure time-index features shift by construction and
+# always score high PSI — but that is not actionable "the data broke" drift,
+# it just restates "time moved forward". Reporting them buried the ~13 genuine
+# CBD-regime signals under uninformative red rows.
+#
+# NOTE: PSI measures the distribution shift of a feature between reference and
+# current data — NOT any "actual vs estimated" accuracy. pickup_month scoring
+# high PSI does not mean the month was computed wrong; it means the validation
+# fold covers different months than the reference (expected in temporal CV).
+#
+# is_post_cbd / cbd_* are deliberately NOT excluded: their shift reflects a
+# real external regime change (the 2025 congestion fee) with modelling impact.
+# ---------------------------------------------------------------------------
+DRIFT_EXCLUDE_FEATURES = ["pickup_month", "pickup_year", "month_sin", "month_cos"]
 
 # ---------------------------------------------------------------------------
 # Monotonic constraints for tree models (LightGBM / XGBoost).

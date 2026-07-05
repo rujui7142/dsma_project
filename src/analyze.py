@@ -29,6 +29,7 @@ import pandas as pd
 
 from src.config import (
     DATA_PATHS, SAMPLE_CONFIG, TARGET_COL, LOGS_DIR, WANDB_PROJECT,
+    DRIFT_EXCLUDE_FEATURES,
 )
 from src.data.loader import load_parquet_files, load_taxi_zones
 from src.data.cleaner import clean_training_data
@@ -214,7 +215,12 @@ def main():
 
         curr_feat = ref_engineer.transform(X_vl_raw)
         curr_feat = ref_engineer.get_tree_features(curr_feat)
-        fd = detect_feature_drift(ref_feat, curr_feat, list(ref_feat.columns))
+        # Exclude pure time-index features from drift monitoring — in
+        # forward-chaining CV they shift by construction (each fold is a later
+        # calendar window), so their PSI is uninformative noise. See
+        # config.DRIFT_EXCLUDE_FEATURES.
+        drift_cols = [c for c in ref_feat.columns if c not in DRIFT_EXCLUDE_FEATURES]
+        fd = detect_feature_drift(ref_feat, curr_feat, drift_cols)
         for _, r in fd.iterrows():
             drift_rows.append({"fold": fold_label, "feature": r["feature"], "psi": r["psi"]})
 
