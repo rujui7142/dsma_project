@@ -337,16 +337,19 @@ MODEL_DEFAULTS = {
         # n_estimators is a ceiling, not a target: early stopping (see
         # trainer._fit_lgbm) determines the actual number of trees from
         # validation performance. Set high so the cap is never the binding
-        # constraint — 1000 was truncating convergence on the full feature set.
+        # constraint -- deliberately NOT adopted from the sweep below, which
+        # tunes n_estimators as an ordinary value rather than a hard ceiling.
         "n_estimators": 3000,
-        "learning_rate": 0.1185205798862516,
-        "num_leaves": 45,
-        "max_depth": 12,
-        "min_child_samples": 110,
-        "subsample": 0.9306560055940204,
-        "colsample_bytree": 0.5662342412045633,
-        "reg_alpha": 1.2312824586076985,
-        "reg_lambda": 1.521244034412757,
+        # Rest tuned via two-phase (random -> Bayesian) sweep, tag hp-mae4,
+        # optimizing val_mae (phase 2 improved on phase 1: 3.4687 < 3.4736).
+        "learning_rate": 0.011287546344446692,
+        "num_leaves": 239,
+        "max_depth": -1,
+        "min_child_samples": 169,
+        "subsample": 0.6015683591825666,
+        "colsample_bytree": 0.6625247253719085,
+        "reg_alpha": 1.1683398741370603,
+        "reg_lambda": 0.6392320412392658,
         "random_state": 42,
         "n_jobs": -1,
         "verbose": -1,
@@ -354,30 +357,36 @@ MODEL_DEFAULTS = {
     "xgb": {
         # Same rationale as lgbm above — ceiling, early stopping picks the count.
         "n_estimators": 3000,
-        "learning_rate": 0.1504414371946877,
-        "max_depth": 12,
-        "subsample": 0.5361097024847514,
-        "colsample_bytree": 0.5715637330073469,
-        "reg_alpha": 0.0792290051076241,
-        "reg_lambda": 1.3483715452148335,
+        # Rest tuned via two-phase sweep, tag hp-mae4 (phase 2 improved on
+        # phase 1: val_mae 3.5922 < 3.6219).
+        "learning_rate": 0.17448300108210288,
+        "max_depth": 10,
+        "subsample": 0.5932679738511681,
+        "colsample_bytree": 0.6919324185689862,
+        "reg_alpha": 1.7948531024194463,
+        "reg_lambda": 3.950327443854941,
         "random_state": 42,
         "n_jobs": -1,
         "tree_method": "hist",
         "verbosity": 0,
     },
     "rf": {
+        # Tuned via two-phase sweep, tag hp-mae4. Phase 2's narrowed Bayesian
+        # search actually did WORSE than phase 1 here (val_mae 3.6678 >
+        # 3.6354) -- keeping phase 1's best rather than blindly taking
+        # phase 2's, since the goal is the best config found, not "whichever
+        # phase ran last."
         "n_estimators": 100,
-        "max_depth": 15,
-        "min_samples_leaf": 5,
-        "max_features": "log2",
+        "max_depth": 20,
+        "min_samples_leaf": 10,
+        "max_features": "sqrt",
         "max_samples": 150_000,  # cap bootstrap size per tree — keeps RF fast on large datasets
         "random_state": 42,
         "n_jobs": -1,
     },
     "ridge": {
-        # Sweep's best (0.001) sat at the search grid's lower boundary —
-        # re-run with the new two-phase protocol (continuous log-uniform
-        # range) to check whether even less regularization helps further.
-        "alpha": 0.001,
+        # Tuned via two-phase sweep, tag hp-mae4 (continuous log-uniform
+        # range); phase 2 improved on phase 1: val_mae 3.8221 < 3.8232.
+        "alpha": 998.2802272204784,
     },
 }
