@@ -231,20 +231,46 @@ ROUTE_TE_SMOOTHING = 20.0
 
 # ---------------------------------------------------------------------------
 # Feature selection (step 3): the wide candidate net is always computed, but
-# training can optionally be restricted to a learned "most predictive" subset
-# chosen by select_features.py (forward-chaining CV). When SELECTED_FEATURES is
-# None the full ~98-feature candidate set is used; otherwise get_tree_features()
-# filters to the given list.
+# training can optionally be restricted to a learned "most predictive" subset.
+# When SELECTED_FEATURES is None the full ~147-feature candidate set is used;
+# otherwise get_tree_features() filters to the given list.
 #
-# NOTE: a 30k-sample forward-chaining sweep found a 12-feature subset with
-# slightly lower CV RMSE than the full set, but at production scale (150k/month)
-# this pruning reduced performance widely — the smaller sample under-sampled
-# rare zones/routes, making high-cardinality features (PU/DOLocationID-derived
-# encodings, zone one-hots) look like noise when they are not at full scale.
-# Reverted to the full candidate net for training. Re-validate any future
-# pruning at the actual training sample size before trusting it.
+# HISTORICAL NOTE: an earlier 30k-sample forward-chaining sweep found a
+# 12-feature subset with slightly lower CV RMSE than the full set, but at
+# production scale (150k/month) that pruning reduced performance widely --
+# the smaller sample under-sampled rare zones/routes, making high-cardinality
+# features (PU/DOLocationID-derived encodings, zone one-hots) look like noise
+# when they are not at full scale. Reverted to the full candidate net at the
+# time.
+#
+# CURRENT SELECTION (src/feature_selection_temporal.py, tag trial4-protected):
+# an incremental K-sweep -- rank by mean SHAP importance, sweep K from small
+# to full, keep the smallest K where BOTH CV MAE and Val MAE hold within
+# tolerance of their best observed values -- with the TLC fare-rule features
+# (JFK/LGA/EWR fees, CBD fee, holiday-gated rush hour, outside-NYC flag)
+# protected from removal regardless of aggregate SHAP rank, since they were
+# purpose-built to fix a specific worst-performing SEGMENT (20+mi/JFK bucket)
+# that an aggregate-MAE-only ranking can't see the value of. Initially run at
+# --sample 30000 (best K=39, CV MAE 2.3525 vs 2.4108 full, Val MAE 3.3911 vs
+# 3.4514 full) -- then explicitly RE-VALIDATED at production scale (150k/month,
+# src/validate_feature_selection.py) to guard against repeating the exact
+# historical mistake above. It held, and by a WIDER margin at full scale:
+# CV MAE 2.2903 vs 2.3492 full, Val MAE 3.3620 vs 3.3973 full, and the
+# selected set beat the full set on every one of the 5 individual CV folds
+# too -- not a small-sample artifact.
 # ---------------------------------------------------------------------------
-SELECTED_FEATURES = None
+SELECTED_FEATURES = [
+    "PULocationID", "DOLocationID", "trip_distance", "log_distance", "distance_sq",
+    "zone_manhattan_distance", "zone_euclidean_distance", "pickup_hour",
+    "pickup_dayofweek", "pickup_month", "hour_sin", "hour_cos", "dow_sin", "dow_cos",
+    "is_jfk_pu", "is_lga_pu", "is_jfk_do", "is_lga_do", "is_airport_pickup",
+    "is_airport_route", "airport_fee_est", "is_lga_route", "lga_surcharge_est",
+    "ewr_surcharge_est", "is_jfk_manhattan_flat_route", "is_outside_nyc_pu",
+    "is_outside_nyc_do", "is_outside_nyc_route", "is_legal_holiday",
+    "congestion_surcharge_est", "cbd_fee_est", "is_post_cbd", "est_metered_fare",
+    "distance_x_manhattan", "distance_x_cross_borough", "hour_x_distance",
+    "distance_x_jfk_flat", "route_mean_fare", "route_mean_duration_min",
+]
 
 # ---------------------------------------------------------------------------
 # Features excluded from PSI/drift MONITORING (not from the model itself).
