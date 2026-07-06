@@ -65,6 +65,37 @@ def filter_valid_trips(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     return df
 
 
+def filter_midnight_crossing_consistency(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+    """Guard against corrupted multi-day-spanning trip timestamps.
+
+    filter_valid_trips already bounds trip_duration_min to <= 180 minutes,
+    which mathematically means pickup and dropoff can differ by AT MOST one
+    calendar date (a 3-hour span can cross at most one midnight). This is a
+    defensive belt-and-suspenders check on that invariant: when pickup and
+    dropoff fall on different calendar DATES, the dropoff date must be
+    EXACTLY one day after the pickup date -- i.e. midnight genuinely falls
+    between them, and the two dates are day-after-day, not further apart.
+
+    Deliberately compares full dates (via .dt.normalize()), not raw
+    day-of-month integers: a naive `dropoff_day == pickup_day + 1` check
+    would wrongly reject legitimate month-boundary crossings (e.g. a trip
+    from July 31 23:50 to August 1 00:10 has pickup_day=31, dropoff_day=1,
+    and 1 != 31+1 -- a bug, not a real anomaly).
+    """
+    n_before = len(df)
+    pu_date = pd.to_datetime(df["tpep_pickup_datetime"]).dt.normalize()
+    do_date = pd.to_datetime(df["tpep_dropoff_datetime"]).dt.normalize()
+    same_day = pu_date == do_date
+    next_day = do_date == (pu_date + pd.Timedelta(days=1))
+    mask = same_day | next_day
+    df = df[mask].copy()
+    if verbose:
+        removed = n_before - len(df)
+        pct = removed / n_before * 100 if n_before else 0.0
+        print(f"  filter_midnight_crossing_consistency: removed {removed:,} rows ({pct:.3f}%)")
+    return df
+
+
 def filter_outliers(df: pd.DataFrame, cols: List[str], upper_pct: float = 0.99, verbose: bool = True) -> pd.DataFrame:
     """Remove rows where any col exceeds its upper_pct quantile.
 
@@ -173,6 +204,7 @@ def clean_training_data(df: pd.DataFrame) -> pd.DataFrame:
     df = compute_trip_duration(df)
     df = compute_target(df)
     df = filter_valid_trips(df)
+    df = filter_midnight_crossing_consistency(df)
     df = filter_outliers(
         df,
         cols=["trip_distance", "trip_duration_min", TARGET_COL],
@@ -190,5 +222,6 @@ def clean_test_data(df: pd.DataFrame) -> pd.DataFrame:
     df = compute_trip_duration(df)
     df = compute_target(df)
     df = filter_valid_trips(df)
+    df = filter_midnight_crossing_consistency(df)
     df = filter_fare_efficiency_outliers(df, threshold=CLEANING["fare_efficiency_zscore"])
     return df.reset_index(drop=True)
