@@ -411,19 +411,18 @@ MODEL_DEFAULTS = {
         # constraint -- deliberately NOT adopted from the sweep below, which
         # tunes n_estimators as an ordinary value rather than a hard ceiling.
         "n_estimators": 3000,
-        # Rest tuned via two-phase (random -> Bayesian) sweep, tag hp-full --
-        # the first sweep run against the FULL current feature set (TLC fare
-        # rules, zone-centroid Manhattan/Euclidean distance, and the
-        # route-mean-duration feature all included; hp-mae4 predates all
-        # three). Phase 2 improved on phase 1: val_mae 3.4659 < 3.4788.
-        "learning_rate": 0.054067658205275225,
-        "num_leaves": 123,
+        # Rest tuned via two-phase sweep, tag hp-selected -- the first sweep
+        # run against the 39-feature SELECTED_FEATURES set (hp-full predates
+        # feature selection). Phase 2 improved on phase 1: val_mae
+        # 3.4020 < 3.4113.
+        "learning_rate": 0.024035299279756683,
+        "num_leaves": 221,
         "max_depth": -1,
-        "min_child_samples": 163,
-        "subsample": 0.6488981724878139,
-        "colsample_bytree": 0.5860085311754739,
-        "reg_alpha": 1.423533113687088,
-        "reg_lambda": 0.9055168201393412,
+        "min_child_samples": 79,
+        "subsample": 0.6244434810571529,
+        "colsample_bytree": 0.6691481605051401,
+        "reg_alpha": 0.9365677778229594,
+        "reg_lambda": 0.7673837159429999,
         "random_state": 42,
         "n_jobs": -1,
         "verbose": -1,
@@ -431,34 +430,33 @@ MODEL_DEFAULTS = {
     "xgb": {
         # Same rationale as lgbm above — ceiling, early stopping picks the count.
         "n_estimators": 3000,
-        # Rest tuned via two-phase sweep, tag hp-full (phase 2 improved on
-        # phase 1: val_mae 3.5588 < 3.5849).
-        "learning_rate": 0.2889341667880763,
+        # Rest tuned via two-phase sweep, tag hp-selected (phase 2 improved on
+        # phase 1: val_mae 3.5107 < 3.5522).
+        "learning_rate": 0.010891882121343632,
         "max_depth": 12,
-        "subsample": 0.5348930755840937,
-        "colsample_bytree": 0.5488813999425471,
-        "reg_alpha": 1.737388670316358,
-        "reg_lambda": 3.152539693596706,
+        "subsample": 0.8564405933560423,
+        "colsample_bytree": 0.5411215338976421,
+        "reg_alpha": 0.04927507274634899,
+        "reg_lambda": 4.034859340553138,
         "random_state": 42,
         "n_jobs": -1,
         "tree_method": "hist",
         "verbosity": 0,
     },
     "rf": {
-        # Tuned via two-phase sweep, tag hp-full. Phase 2 improved on phase 1
-        # this time (val_mae 3.5889 < 3.6077, unlike hp-mae4 where phase 2
-        # regressed) -- both phases' best were compared before adopting.
-        "n_estimators": 50,
+        # Tuned via two-phase sweep, tag hp-selected. Phase 2 improved on
+        # phase 1: val_mae 3.5810 < 3.6671.
+        "n_estimators": 200,
         "max_depth": 20,
-        "min_samples_leaf": 20,
+        "min_samples_leaf": 10,
         "max_features": 0.7,
-        "max_samples": 200_000,  # cap bootstrap size per tree — keeps RF fast on large datasets
+        "max_samples": 100_000,  # cap bootstrap size per tree — keeps RF fast on large datasets
         "random_state": 42,
         "n_jobs": -1,
     },
     "ridge": {
-        # Tuned via two-phase sweep, tag hp-full (continuous log-uniform
-        # range); phase 1/phase 2 val_mae tied at 3.7826, took phase 2's alpha.
-        "alpha": 119.34228808665776,
+        # Tuned via two-phase sweep, tag hp-selected (continuous log-uniform
+        # range); phase 1/phase 2 val_mae tied at 3.8301, took phase 2's alpha.
+        "alpha": 35.819541513587424,
     },
 }
