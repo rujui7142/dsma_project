@@ -28,6 +28,28 @@ _LGA = TLC_RULES["lga_zone_id"]
 _EWR = TLC_RULES["ewr_zone_id"]
 _OUTSIDE_NYC = TLC_RULES["outside_nyc_zone_id"]
 _CBD_YEAR = TLC_RULES["cbd_start_year"]
+
+
+def add_raw_metadata_features(df: pd.DataFrame) -> pd.DataFrame:
+    """VendorID, passenger_count, and store_and_fwd_flag as direct model
+    inputs. None has a documented causal link to fare (VendorID is meter
+    hardware/provider metadata, passenger_count is explicitly excluded from
+    the TLC rate structure -- "no charge for extra passengers" -- and
+    store_and_fwd_flag is a connectivity artifact), but each was validated
+    empirically via forward-chaining CV + Val ablation before inclusion,
+    improving MAE consistently across every fold rather than only on
+    average -- most likely proxying for other structure (e.g. certain
+    vendors' fleets or connectivity patterns correlating with specific
+    routes or trip types) rather than a direct pricing effect.
+
+    passenger_count has a small number of missing values, filled with 1 (the
+    overwhelming majority value); store_and_fwd_flag is mapped Y/N -> 1/0
+    with missing treated as N (the overwhelming majority class).
+    """
+    df = df.copy()
+    df["passenger_count"] = df["passenger_count"].fillna(1.0)
+    df["store_and_fwd_flag_enc"] = (df["store_and_fwd_flag"] == "Y").astype(np.int8)
+    return df
 _WEST_VILLAGE = set(WEST_VILLAGE_ZONES)
 _HOTSPOTS = set(HOTSPOT_ZONES)
 _CBD_ZONES = set(CBD_ZONES)

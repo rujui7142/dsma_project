@@ -25,6 +25,7 @@ from src.config import (
     ROUTE_TE_SMOOTHING, BOROUGH_HOLIDAY_NAMES,
 )
 from src.features.domain import (
+    add_raw_metadata_features,
     add_zone_features,
     add_zone_geo_distance_features,
     add_airport_features,
@@ -58,6 +59,10 @@ from src.features.macro import add_macro_features
 
 # Numeric features fed to all model types
 NUMERIC_FEATURES: List[str] = [
+    # --- raw trip metadata ---
+    "VendorID",
+    "passenger_count",
+    "store_and_fwd_flag_enc",
     # --- distance ---
     "trip_distance",
     "log_distance",
@@ -368,6 +373,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         df = X.copy()
 
         # 1. Unsupervised transforms
+        df = add_raw_metadata_features(df)
         df = _add_cyclic_time(df)
         df = _add_distance_features(df)
         df = add_trip_shape(df)

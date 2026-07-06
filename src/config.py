@@ -40,6 +40,9 @@ RAW_INPUT_COLS = [
     "pickup_day",
     "pickup_month",
     "pickup_year",
+    "VendorID",
+    "passenger_count",
+    "store_and_fwd_flag",
 ]
 
 # ---------------------------------------------------------------------------
@@ -258,6 +261,15 @@ ROUTE_TE_SMOOTHING = 20.0
 # CV MAE 2.2903 vs 2.3492 full, Val MAE 3.3620 vs 3.3973 full, and the
 # selected set beat the full set on every one of the 5 individual CV folds
 # too -- not a small-sample artifact.
+#
+# ADDED SEPARATELY (src/trial_raw_metadata_features.py): VendorID,
+# passenger_count, store_and_fwd_flag_enc. None has a documented causal link
+# to fare, but each was validated the same way as everything else here --
+# forward-chaining CV + Val ablation -- and improved MAE on every one of the
+# 5 folds plus Val (CV MAE 2.2985 vs 2.3209, Val MAE 3.3459 vs 3.3698 without
+# them), most likely proxying for other structure (vendor fleet/service-area
+# differences, connectivity patterns correlating with trip type) rather than
+# a direct pricing effect.
 # ---------------------------------------------------------------------------
 SELECTED_FEATURES = [
     "PULocationID", "DOLocationID", "trip_distance", "log_distance", "distance_sq",
@@ -270,6 +282,7 @@ SELECTED_FEATURES = [
     "congestion_surcharge_est", "cbd_fee_est", "is_post_cbd", "est_metered_fare",
     "distance_x_manhattan", "distance_x_cross_borough", "hour_x_distance",
     "distance_x_jfk_flat", "route_mean_fare", "route_mean_duration_min",
+    "VendorID", "passenger_count", "store_and_fwd_flag_enc",
 ]
 
 # ---------------------------------------------------------------------------
