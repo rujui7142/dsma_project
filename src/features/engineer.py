@@ -47,8 +47,6 @@ from src.features.domain import (
     add_route_duration_feature,
     learn_zone_fare_std,
     add_zone_fare_std,
-    learn_prophet_seasonal_model,
-    add_prophet_seasonal_features,
 )
 from src.features.holidays import add_holiday_features
 from src.features.macro import add_macro_features
@@ -147,14 +145,6 @@ NUMERIC_FEATURES: List[str] = [
     "is_muslim_holiday",
     "is_other_cultural_holiday",
     "days_to_nearest_holiday",
-    # --- Prophet's fitted seasonal signal (weekly/yearly/hourly/holiday
-    # effects, estimated globally across all routes, pooled -- see
-    # domain.add_prophet_seasonal_features). Deliberately excludes Prophet's
-    # trend component (demonstrated forward-extrapolation bias). ---
-    "prophet_weekly",
-    "prophet_yearly",
-    "prophet_hourly_effect",
-    "prophet_holiday_effect",
     # --- macro-financial (wealth-effect / ability-to-pay proxy) ---
     "dxy_level",
     "sp500_level",
@@ -324,10 +314,6 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         # fare component -- see add_route_duration_feature)
         self._route_duration_te: Optional[pd.Series] = None
         self._global_mean_duration: float = 0.0
-        # Prophet's fitted seasonal decomposition (weekly/yearly/hourly/
-        # holiday effects), fit on this fold's training data only -- see
-        # add_prophet_seasonal_features
-        self._prophet_model = None
 
     # ------------------------------------------------------------------
 
@@ -359,7 +345,6 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                 X, y, ROUTE_TE_SMOOTHING
             )
             self._pu_std, self._do_std = learn_zone_fare_std(X, y)
-            self._prophet_model = learn_prophet_seasonal_model(X, y)
 
         if duration is not None:
             self._route_duration_te, _, self._global_mean_duration = learn_route_stats(
@@ -391,7 +376,6 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         # which are raw inputs available from the start) -- add_time_surcharges
         # needs is_legal_holiday to gate the rush-hour surcharge correctly.
         df = add_holiday_features(df)
-        df = add_prophet_seasonal_features(df, self._prophet_model)  # needs pickup_year/month/day/hour only
         df = add_zone_features(df, self.zones_df)
         df = add_zone_geo_distance_features(df, self.zones_df)  # needs trip_distance for the NaN fallback
         df = add_borough_flags(df)           # needs pu_borough / do_borough

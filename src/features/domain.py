@@ -4,6 +4,16 @@ Each function adds features that can be computed exclusively from inference-time
 inputs (PULocationID, DOLocationID, trip_distance, pickup time components).
 Surcharge estimates are derived from publicly available TLC fare rules:
 https://www.nyc.gov/site/tlc/passengers/taxi-fare.page
+
+Tried and reverted: feeding Prophet's fitted seasonal signal (weekly/yearly/
+hourly/holiday effects, fit per-fold on training data only) in as per-trip
+features (commit 1d3fefe). Confirmed empirically NOT to help: CV MAE, val
+MAE, and real 2026 test MAE were all slightly worse with it than without
+(e.g. test MAE 4.3522 vs 4.2986 baseline) -- the trees already learn
+hour/day/month/holiday patterns fine from the existing raw temporal features
+at this data scale, so Prophet's globally-pooled seasonal signal was
+redundant at best. See src/prophet_forecast.py for the standalone aggregate
+forecasting use case where Prophet genuinely does help.
 """
 
 from typing import List, Optional, Tuple
@@ -13,15 +23,8 @@ import numpy as np
 
 from src.config import (
     TLC_RULES, BOROUGH_MAP, SERVICE_ZONE_MAP,
-    WEST_VILLAGE_ZONES, HOTSPOT_ZONES, METERED_FARE, CBD_ZONES, PROPHET_DEFAULTS,
+    WEST_VILLAGE_ZONES, HOTSPOT_ZONES, METERED_FARE, CBD_ZONES,
 )
-from src.features.holidays import _HOLIDAY_SETS
-
-try:
-    from prophet import Prophet
-    _PROPHET_AVAILABLE = True
-except ImportError:
-    _PROPHET_AVAILABLE = False
 
 _JFK = TLC_RULES["jfk_zone_id"]
 _LGA = TLC_RULES["lga_zone_id"]
@@ -31,118 +34,6 @@ _CBD_YEAR = TLC_RULES["cbd_start_year"]
 _WEST_VILLAGE = set(WEST_VILLAGE_ZONES)
 _HOTSPOTS = set(HOTSPOT_ZONES)
 _CBD_ZONES = set(CBD_ZONES)
-
-_PROPHET_HOLIDAY_CATEGORIES = ("federal", "christian", "jewish", "muslim", "other_cultural")
-
-
-def _build_prophet_holidays_df() -> pd.DataFrame:
-    """Same holiday calendar as prophet_forecast.build_prophet_holidays --
-    duplicated here (not imported) to avoid a circular import: prophet_forecast
-    imports from src.sweep, which imports FeatureEngineer from this package,
-    which would import back into this module.
-    """
-    rows = [
-        {"holiday": category, "ds": pd.Timestamp(y, m, d)}
-        for category in _PROPHET_HOLIDAY_CATEGORIES
-        for (y, m, d) in _HOLIDAY_SETS[category]
-    ]
-    return pd.DataFrame(rows)
-
-
-_PROPHET_HOLIDAYS_DF = _build_prophet_holidays_df() if _PROPHET_AVAILABLE else None
-
-
-# ---------------------------------------------------------------------------
-# Prophet's fitted seasonal signal, as a per-trip feature
-#
-# See src/prophet_forecast.py's module docstring for the full story: a
-# per-trip Prophet attempt was WORSE than a trivial mean baseline (fare is
-# driven mostly by nonlinear zone-pair effects Prophet's linear regressors
-# can't represent), but Prophet's AGGREGATE hourly-mean-fare forecast beat
-# its trivial baseline convincingly. This tries the middle ground the user
-# asked for: fit Prophet on the fold's hourly-aggregated series (same
-# leak-free, per-fold discipline as route_mean_fare -- fit on TRAIN only),
-# then broadcast its fitted CYCLICAL seasonal components (weekly, yearly,
-# hour-of-day, holiday effects) onto every trip as new features, and let
-# CV/feature-selection determine empirically whether they add anything
-# beyond the existing rule-based temporal flags.
-#
-# Deliberately EXCLUDES Prophet's 'trend' component: we confirmed empirically
-# that Prophet's trend systematically underpredicted the real 2026 test
-# period (~$3.34/day, every day) -- baking a demonstrated forward-
-# extrapolation bias into a per-trip feature would import that bias into
-# every future prediction, not fix anything. Only the components that don't
-# drift into the future (weekly/yearly/daily seasonality, holiday effects)
-# are used.
-# ---------------------------------------------------------------------------
-
-def learn_prophet_seasonal_model(X: pd.DataFrame, y: pd.Series) -> Optional["Prophet"]:
-    """Fit a Prophet model on this fold's TRAINING data only (hourly-
-    aggregated mean fare) for later use by add_prophet_seasonal_features.
-    Returns None if prophet isn't installed or there's too little data for
-    seasonality to be identifiable.
-    """
-    if not _PROPHET_AVAILABLE:
-        return None
-    ds = pd.to_datetime({
-        "year": X["pickup_year"], "month": X["pickup_month"],
-        "day": X["pickup_day"], "hour": X["pickup_hour"],
-    })
-    tmp = pd.DataFrame({"ds": ds, "y": y.values if hasattr(y, "values") else y})
-    hourly = tmp.groupby("ds", as_index=False)["y"].mean()
-    if len(hourly) < 48:  # need at least ~2 days of hourly buckets to identify seasonality
-        return None
-
-    model = Prophet(
-        changepoint_prior_scale=PROPHET_DEFAULTS["changepoint_prior_scale"],
-        seasonality_prior_scale=PROPHET_DEFAULTS["seasonality_prior_scale"],
-        holidays_prior_scale=PROPHET_DEFAULTS["holidays_prior_scale"],
-        changepoint_range=PROPHET_DEFAULTS["changepoint_range"],
-        seasonality_mode=PROPHET_DEFAULTS["seasonality_mode"],
-        yearly_seasonality=True,
-        weekly_seasonality=True,
-        daily_seasonality=True,
-        holidays=_PROPHET_HOLIDAYS_DF,
-    )
-    model.fit(hourly)
-    return model
-
-
-def add_prophet_seasonal_features(df: pd.DataFrame, prophet_model: Optional["Prophet"]) -> pd.DataFrame:
-    """Broadcast a fitted Prophet model's seasonal components onto every
-    trip. Predicts ONCE on the set of UNIQUE (date, hour) buckets present in
-    df (there are at most a few thousand, vs. potentially hundreds of
-    thousands of trip rows sharing them), then maps back -- avoids redundant
-    predict() calls for trips that share an hour bucket.
-
-    prophet_model must already be fit on this fold's TRAINING data only (see
-    learn_prophet_seasonal_model). None (not fitted, or prophet unavailable)
-    -> all-zero fallback, same convention as this project's other learned
-    features (e.g. add_zone_popularity, add_route_features).
-    """
-    df = df.copy()
-    cols = ["prophet_weekly", "prophet_yearly", "prophet_hourly_effect", "prophet_holiday_effect"]
-    if prophet_model is None:
-        for col in cols:
-            df[col] = 0.0
-        return df
-
-    ds = pd.to_datetime({
-        "year": df["pickup_year"], "month": df["pickup_month"],
-        "day": df["pickup_day"], "hour": df["pickup_hour"],
-    })
-    unique_ds = pd.DataFrame({"ds": ds.unique()})
-    forecast = prophet_model.predict(unique_ds).set_index("ds")
-
-    component_map = {
-        "prophet_weekly": "weekly",
-        "prophet_yearly": "yearly",
-        "prophet_hourly_effect": "daily",
-        "prophet_holiday_effect": "holidays",
-    }
-    for out_col, component in component_map.items():
-        df[out_col] = ds.map(forecast[component]).values if component in forecast.columns else 0.0
-    return df
 
 
 # ---------------------------------------------------------------------------

@@ -337,10 +337,6 @@ MONOTONIC_INCREASING_FEATURES = [
     "route_mean_duration_min",
     "pu_zone_mean_fare",
     "do_zone_mean_fare",
-    "prophet_weekly",
-    "prophet_yearly",
-    "prophet_hourly_effect",
-    "prophet_holiday_effect",
 ]
 
 # ---------------------------------------------------------------------------
@@ -453,9 +449,14 @@ MODEL_DEFAULTS = {
 # at HOURLY resolution so daily_seasonality is actually identifiable (a
 # one-row-per-day series has zero within-day time variance for that term to
 # fit -- verified: max prediction diff between True/False was 0.0076, pure
-# optimizer noise). This also lets Prophet's fitted signal feed the per-trip
-# models as a genuine hour-of-day feature (features/domain.py
-# add_prophet_seasonal_features).
+# optimizer noise).
+#
+# Also tried feeding Prophet's fitted seasonal signal into the per-trip
+# models as a feature (features/domain.py, since reverted): confirmed
+# empirically NOT to help (CV/val/real-test MAE all slightly worse) -- the
+# trees already learn temporal patterns fine from the existing raw features
+# at this data scale. Prophet stays scoped to this standalone aggregate
+# forecasting use case, where it's genuinely useful.
 #
 # Tuned via two-phase sweep (tag prophet-hourly, 17542 hourly buckets); phase
 # 1 (val_mae=2.3241, additive) narrowly beat phase 2 (val_mae=2.3359,
