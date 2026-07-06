@@ -12,4 +12,3 @@ seaborn>=0.12.0
 dask[dataframe]>=2023.1.0
 evidently>=0.6.0
 holidays>=0.58
-prophet>=1.1

@@ -436,39 +436,3 @@ MODEL_DEFAULTS = {
         "alpha": 119.34228808665776,
     },
 }
-
-# ---------------------------------------------------------------------------
-# Prophet -- AGGREGATE hourly-fare forecasting, not the per-trip models above.
-# See src/prophet_forecast.py's module docstring: a per-trip attempt (Prophet
-# as a per-trip regressor with trip-level extra regressors) underperformed a
-# trivial constant-mean baseline (val MAE 14.44 vs 10.78) -- Prophet's
-# trend+seasonality+LINEAR-regressor formulation can't represent per-trip
-# fare, which is driven mostly by highly nonlinear, high-cardinality zone-pair
-# effects. Reframed to what Prophet is actually built for: forecasting a
-# smooth aggregate series. Originally built at DAILY resolution, then rebuilt
-# at HOURLY resolution so daily_seasonality is actually identifiable (a
-# one-row-per-day series has zero within-day time variance for that term to
-# fit -- verified: max prediction diff between True/False was 0.0076, pure
-# optimizer noise).
-#
-# Also tried feeding Prophet's fitted seasonal signal into the per-trip
-# models as a feature (features/domain.py, since reverted): confirmed
-# empirically NOT to help (CV/val/real-test MAE all slightly worse) -- the
-# trees already learn temporal patterns fine from the existing raw features
-# at this data scale. Prophet stays scoped to this standalone aggregate
-# forecasting use case, where it's genuinely useful.
-#
-# Tuned via two-phase sweep (tag prophet-hourly, 17542 hourly buckets); phase
-# 1 (val_mae=2.3241, additive) narrowly beat phase 2 (val_mae=2.3359,
-# multiplicative) -- both far better than the untuned starting point
-# (val_mae=3.62, itself already better than the hourly trivial baseline's
-# 3.81) -- so phase 1's config was adopted rather than blindly taking
-# phase 2's.
-# ---------------------------------------------------------------------------
-PROPHET_DEFAULTS = {
-    "changepoint_prior_scale": 0.005385416749916531,
-    "seasonality_prior_scale": 0.017676419262086913,
-    "holidays_prior_scale": 0.04787765225094195,
-    "changepoint_range": 0.8210241978382022,
-    "seasonality_mode": "additive",
-}

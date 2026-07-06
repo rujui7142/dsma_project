@@ -5,15 +5,12 @@ inputs (PULocationID, DOLocationID, trip_distance, pickup time components).
 Surcharge estimates are derived from publicly available TLC fare rules:
 https://www.nyc.gov/site/tlc/passengers/taxi-fare.page
 
-Tried and reverted: feeding Prophet's fitted seasonal signal (weekly/yearly/
+Tried and reverted: feeding a Prophet-fitted seasonal signal (weekly/yearly/
 hourly/holiday effects, fit per-fold on training data only) in as per-trip
-features (commit 1d3fefe). Confirmed empirically NOT to help: CV MAE, val
-MAE, and real 2026 test MAE were all slightly worse with it than without
-(e.g. test MAE 4.3522 vs 4.2986 baseline) -- the trees already learn
-hour/day/month/holiday patterns fine from the existing raw temporal features
-at this data scale, so Prophet's globally-pooled seasonal signal was
-redundant at best. See src/prophet_forecast.py for the standalone aggregate
-forecasting use case where Prophet genuinely does help.
+features. Confirmed empirically NOT to help: CV MAE, val MAE, and real 2026
+test MAE were all slightly worse with it than without (e.g. test MAE 4.3522
+vs 4.2986 baseline) -- the trees already learn hour/day/month/holiday
+patterns fine from the existing raw temporal features at this data scale.
 """
 
 from typing import List, Optional, Tuple
