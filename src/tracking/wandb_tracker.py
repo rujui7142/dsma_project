@@ -102,6 +102,29 @@ RIDGE_SWEEP_CONFIG: Dict[str, Any] = {
     },
 }
 
+# NOT for per-trip prediction -- see src/prophet_forecast.py's module docstring
+# for why Prophet was reframed to aggregate daily-fare forecasting (a per-trip
+# attempt underperformed a trivial constant-mean baseline: MAE 14.4 vs 10.8).
+PROPHET_SWEEP_CONFIG: Dict[str, Any] = {
+    "method": "random",
+    "metric": {"name": "val_mae", "goal": "minimize"},
+    "parameters": {
+        "changepoint_prior_scale": {
+            "distribution": "log_uniform_values", "min": 0.001, "max": 0.5,
+        },
+        "seasonality_prior_scale": {
+            "distribution": "log_uniform_values", "min": 0.01, "max": 10.0,
+        },
+        "holidays_prior_scale": {
+            "distribution": "log_uniform_values", "min": 0.01, "max": 10.0,
+        },
+        "changepoint_range": {
+            "distribution": "uniform", "min": 0.8, "max": 0.95,
+        },
+        "seasonality_mode": {"values": ["additive", "multiplicative"]},
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Tracker class
