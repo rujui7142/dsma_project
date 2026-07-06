@@ -337,6 +337,10 @@ MONOTONIC_INCREASING_FEATURES = [
     "route_mean_duration_min",
     "pu_zone_mean_fare",
     "do_zone_mean_fare",
+    "prophet_weekly",
+    "prophet_yearly",
+    "prophet_hourly_effect",
+    "prophet_holiday_effect",
 ]
 
 # ---------------------------------------------------------------------------
@@ -438,22 +442,32 @@ MODEL_DEFAULTS = {
 }
 
 # ---------------------------------------------------------------------------
-# Prophet -- AGGREGATE daily-fare forecasting, not the per-trip models above.
+# Prophet -- AGGREGATE hourly-fare forecasting, not the per-trip models above.
 # See src/prophet_forecast.py's module docstring: a per-trip attempt (Prophet
 # as a per-trip regressor with trip-level extra regressors) underperformed a
 # trivial constant-mean baseline (val MAE 14.44 vs 10.78) -- Prophet's
 # trend+seasonality+LINEAR-regressor formulation can't represent per-trip
 # fare, which is driven mostly by highly nonlinear, high-cardinality zone-pair
-# effects. Reframed to what Prophet is actually built for: forecasting the
-# smooth daily-mean-fare series. Tuned via two-phase sweep (tag prophet1);
-# phase 1 (val_mae=1.3960) narrowly beat phase 2 (val_mae=1.3984) -- both far
-# better than the untuned starting point (val_mae=1.78) -- so phase 1's
-# config was adopted rather than blindly taking phase 2's.
+# effects. Reframed to what Prophet is actually built for: forecasting a
+# smooth aggregate series. Originally built at DAILY resolution, then rebuilt
+# at HOURLY resolution so daily_seasonality is actually identifiable (a
+# one-row-per-day series has zero within-day time variance for that term to
+# fit -- verified: max prediction diff between True/False was 0.0076, pure
+# optimizer noise). This also lets Prophet's fitted signal feed the per-trip
+# models as a genuine hour-of-day feature (features/domain.py
+# add_prophet_seasonal_features).
+#
+# Tuned via two-phase sweep (tag prophet-hourly, 17542 hourly buckets); phase
+# 1 (val_mae=2.3241, additive) narrowly beat phase 2 (val_mae=2.3359,
+# multiplicative) -- both far better than the untuned starting point
+# (val_mae=3.62, itself already better than the hourly trivial baseline's
+# 3.81) -- so phase 1's config was adopted rather than blindly taking
+# phase 2's.
 # ---------------------------------------------------------------------------
 PROPHET_DEFAULTS = {
-    "changepoint_prior_scale": 0.01811263631722229,
-    "seasonality_prior_scale": 0.030927951315709027,
-    "holidays_prior_scale": 1.4753919600350451,
-    "changepoint_range": 0.8758140243915251,
-    "seasonality_mode": "multiplicative",
+    "changepoint_prior_scale": 0.005385416749916531,
+    "seasonality_prior_scale": 0.017676419262086913,
+    "holidays_prior_scale": 0.04787765225094195,
+    "changepoint_range": 0.8210241978382022,
+    "seasonality_mode": "additive",
 }

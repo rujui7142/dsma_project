@@ -1,4 +1,4 @@
-"""Aggregate daily-fare forecasting with Prophet.
+"""Aggregate hourly-fare forecasting with Prophet.
 
 REFRAMED from an earlier per-trip attempt: Prophet's trend + seasonality +
 LINEAR extra-regressor formulation badly underperformed a trivial constant-
@@ -7,24 +7,32 @@ naive "always predict the training mean" baseline's 10.78, on ~99k trips with
 8 of our strongest features as extra regressors). Not a tuning problem -- a
 representational mismatch: per-trip fare is driven mostly by WHICH ZONE PAIR
 (high-cardinality, highly nonlinear), which a handful of linear coefficients
-on top of a smooth trend/seasonality curve can't represent, and forcing many
-different fares onto the same smooth curve (many trips share similar
-timestamps) actively hurt relative to just predicting the mean.
+on top of a smooth trend/seasonality curve can't represent.
 
 Reframed to what Prophet is actually built for: forecasting a smooth
-AGGREGATE time series with trend + yearly/weekly seasonality + holiday
-effects. Here: the mean fare per calendar day.
+AGGREGATE time series with trend + yearly/weekly/daily seasonality + holiday
+effects. Originally built at DAILY resolution (one row per calendar day), but
+that makes Prophet's `daily_seasonality` term meaningless: every `ds` in a
+one-row-per-day series has an identical time-of-day (midnight), so there is
+zero within-day variance for that Fourier term to explain -- verified
+directly (max prediction diff between daily_seasonality=True vs False was
+0.0076, pure optimizer noise). Rebuilt at HOURLY resolution (one row per
+pickup date+hour) so daily_seasonality captures a genuine hour-of-day effect,
+which also directly enables feeding Prophet's fitted seasonal signal into the
+per-trip models as a feature (see add_prophet_seasonal_features in
+features/domain.py) -- something the daily-only version structurally could
+not do.
 
 Pipeline:
-  1. Aggregate cleaned training data to one row per calendar day (mean fare).
+  1. Aggregate cleaned training data to one row per (calendar date, hour)
+     bucket (mean fare).
   2. Two-phase W&B sweep (random -> Bayesian) over Prophet's hyperparameters,
-     validated on the held-out Nov-Dec 2025 daily aggregates (same
+     validated on the held-out Nov-Dec 2025 hourly aggregates (same
      VAL_YEARS_MONTHS convention as the rest of the project). Reuses
-     sweep.py's _best_run_config / _narrow_param_space -- same two-phase
-     narrowing logic, no need to duplicate it.
-  3. Refit on the full 2024-2025 daily history with the tuned hyperparameters.
+     sweep.py's _best_run_config / _narrow_param_space directly.
+  3. Refit on the full 2024-2025 hourly history with the tuned hyperparameters.
   4. Forecast the real, held-out 2026 test period and compare against the
-     actual observed daily mean fare -- genuine test-set numbers.
+     actual observed hourly mean fare -- genuine test-set numbers.
 
 Holidays are pulled from features.holidays' own calendar (federal + Christian/
 Jewish/Muslim/other-cultural, computed via real calendar arithmetic) rather
@@ -67,22 +75,23 @@ except ImportError:
 _HOLIDAY_CATEGORIES = ("federal", "christian", "jewish", "muslim", "other_cultural")
 
 # Module-level globals shared with the W&B sweep agent callback
-_DAILY_TRAIN: Optional[pd.DataFrame] = None
-_DAILY_VAL: Optional[pd.DataFrame] = None
+_HOURLY_TRAIN: Optional[pd.DataFrame] = None
+_HOURLY_VAL: Optional[pd.DataFrame] = None
 _HOLIDAYS_DF: Optional[pd.DataFrame] = None
 
 
-def build_daily_series(df: pd.DataFrame) -> pd.DataFrame:
-    """Collapse cleaned trip-level data to one row per calendar day: mean
-    fare (TARGET_COL) plus trip count for context. Requires pickup_year/
-    month/day (added by cleaner.add_datetime_features).
+def build_hourly_series(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse cleaned trip-level data to one row per (date, hour) bucket:
+    mean fare (TARGET_COL) plus trip count for context. Requires
+    pickup_year/month/day/hour (added by cleaner.add_datetime_features).
     """
-    dates = pd.to_datetime(
-        {"year": df["pickup_year"], "month": df["pickup_month"], "day": df["pickup_day"]}
+    ds = pd.to_datetime(
+        {"year": df["pickup_year"], "month": df["pickup_month"],
+         "day": df["pickup_day"], "hour": df["pickup_hour"]}
     )
-    tmp = pd.DataFrame({"ds": dates, "y": df[TARGET_COL].values})
-    daily = tmp.groupby("ds", as_index=False).agg(y=("y", "mean"), n_trips=("y", "size"))
-    return daily.sort_values("ds").reset_index(drop=True)
+    tmp = pd.DataFrame({"ds": ds, "y": df[TARGET_COL].values})
+    hourly = tmp.groupby("ds", as_index=False).agg(y=("y", "mean"), n_trips=("y", "size"))
+    return hourly.sort_values("ds").reset_index(drop=True)
 
 
 def build_prophet_holidays() -> pd.DataFrame:
@@ -101,13 +110,13 @@ def build_prophet_holidays() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def split_train_val(daily: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def split_train_val(hourly: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Same VAL_YEARS_MONTHS convention as the rest of the project (Nov+Dec
-    2025 held out), applied to the daily-aggregated series.
+    2025 held out), applied to the hourly-aggregated series.
     """
-    year_month = list(zip(daily["ds"].dt.year, daily["ds"].dt.month))
-    is_val = pd.Series([ym in VAL_YEARS_MONTHS for ym in year_month], index=daily.index)
-    return daily[~is_val].reset_index(drop=True), daily[is_val].reset_index(drop=True)
+    year_month = list(zip(hourly["ds"].dt.year, hourly["ds"].dt.month))
+    is_val = pd.Series([ym in VAL_YEARS_MONTHS for ym in year_month], index=hourly.index)
+    return hourly[~is_val].reset_index(drop=True), hourly[is_val].reset_index(drop=True)
 
 
 def _regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
@@ -120,16 +129,12 @@ def _regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, flo
     return {"mae": mae, "rmse": rmse, "r2": r2, "mape": mape}
 
 
-def fit_and_forecast(
-    train_daily: pd.DataFrame,
-    eval_daily: pd.DataFrame,
-    params: Dict[str, Any],
-    holidays_df: pd.DataFrame,
-) -> Tuple["Prophet", Dict[str, float]]:
-    """Fit Prophet on train_daily, forecast eval_daily's dates, return
-    (fitted model, regression metrics against eval_daily's actual y).
+def build_prophet_model(params: Dict[str, Any], holidays_df: pd.DataFrame) -> "Prophet":
+    """Construct an (unfitted) Prophet model with our standard seasonality
+    setup: yearly + weekly + daily (now meaningful at hourly resolution --
+    see module docstring) + our own holiday calendar.
     """
-    model = Prophet(
+    return Prophet(
         changepoint_prior_scale=params.get("changepoint_prior_scale", PROPHET_DEFAULTS["changepoint_prior_scale"]),
         seasonality_prior_scale=params.get("seasonality_prior_scale", PROPHET_DEFAULTS["seasonality_prior_scale"]),
         holidays_prior_scale=params.get("holidays_prior_scale", PROPHET_DEFAULTS["holidays_prior_scale"]),
@@ -137,12 +142,24 @@ def fit_and_forecast(
         seasonality_mode=params.get("seasonality_mode", PROPHET_DEFAULTS["seasonality_mode"]),
         yearly_seasonality=True,
         weekly_seasonality=True,
-        daily_seasonality=False,  # one row per day -- no sub-day granularity to model
+        daily_seasonality=True,  # meaningful now: hourly resolution has genuine within-day variance
         holidays=holidays_df,
     )
-    model.fit(train_daily[["ds", "y"]])
-    forecast = model.predict(eval_daily[["ds"]])
-    metrics = _regression_metrics(eval_daily["y"].values, forecast["yhat"].values)
+
+
+def fit_and_forecast(
+    train_hourly: pd.DataFrame,
+    eval_hourly: pd.DataFrame,
+    params: Dict[str, Any],
+    holidays_df: pd.DataFrame,
+) -> Tuple["Prophet", Dict[str, float]]:
+    """Fit Prophet on train_hourly, forecast eval_hourly's timestamps, return
+    (fitted model, regression metrics against eval_hourly's actual y).
+    """
+    model = build_prophet_model(params, holidays_df)
+    model.fit(train_hourly[["ds", "y"]])
+    forecast = model.predict(eval_hourly[["ds"]])
+    metrics = _regression_metrics(eval_hourly["y"].values, forecast["yhat"].values)
     return model, metrics
 
 
@@ -152,7 +169,7 @@ def _sweep_agent_fn():
         raise RuntimeError("wandb not available")
     with wandb.init() as run:
         cfg = dict(wandb.config)
-        _, metrics = fit_and_forecast(_DAILY_TRAIN, _DAILY_VAL, cfg, _HOLIDAYS_DF)
+        _, metrics = fit_and_forecast(_HOURLY_TRAIN, _HOURLY_VAL, cfg, _HOLIDAYS_DF)
         wandb.log({
             "val_mae": metrics["mae"], "val_rmse": metrics["rmse"],
             "val_r2": metrics["r2"], "val_mape": metrics["mape"],
@@ -190,7 +207,7 @@ def parse_args():
 
 
 def main():
-    global _DAILY_TRAIN, _DAILY_VAL, _HOLIDAYS_DF
+    global _HOURLY_TRAIN, _HOURLY_VAL, _HOLIDAYS_DF
 
     if not _PROPHET_AVAILABLE:
         print("ERROR: prophet is not installed. Run: pip install prophet")
@@ -201,14 +218,14 @@ def main():
     print("\n=== Loading + cleaning training data (2024-2025) ===")
     raw_df = load_parquet_files(DATA_PATHS["training"], n_per_file=SAMPLE_CONFIG["n_per_month_train"])
     clean_df = clean_training_data(raw_df)
-    daily = build_daily_series(clean_df)
-    train_daily, val_daily = split_train_val(daily)
-    print(f"  Daily series: {len(daily)} days total ({len(train_daily)} train, {len(val_daily)} val)")
+    hourly = build_hourly_series(clean_df)
+    train_hourly, val_hourly = split_train_val(hourly)
+    print(f"  Hourly series: {len(hourly)} buckets total ({len(train_hourly)} train, {len(val_hourly)} val)")
 
     _HOLIDAYS_DF = build_prophet_holidays()
 
     if args.command == "sweep":
-        _DAILY_TRAIN, _DAILY_VAL = train_daily, val_daily
+        _HOURLY_TRAIN, _HOURLY_VAL = train_hourly, val_hourly
         tracker = WandbTracker(enabled=not args.no_wandb)
         best_config = run_two_phase_sweep(tracker, args.count_random, args.count_bayes, args.tag)
         print(f"\nAdopt these into config.PROPHET_DEFAULTS:\n{best_config}")
@@ -217,13 +234,13 @@ def main():
         print("\n=== Loading real 2026 test data ===")
         test_raw = load_parquet_files(DATA_PATHS["test"], n_per_file=SAMPLE_CONFIG["n_per_month_test"])
         test_clean = clean_test_data(test_raw)
-        test_daily = build_daily_series(test_clean)
-        print(f"  Test daily series: {len(test_daily)} days")
+        test_hourly = build_hourly_series(test_clean)
+        print(f"  Test hourly series: {len(test_hourly)} buckets")
 
         print("\n=== Refitting Prophet on full 2024-2025 history with tuned hyperparameters ===")
-        _, metrics = fit_and_forecast(daily, test_daily, PROPHET_DEFAULTS, _HOLIDAYS_DF)
+        _, metrics = fit_and_forecast(hourly, test_hourly, PROPHET_DEFAULTS, _HOLIDAYS_DF)
 
-        print("\n=== Real 2026 test results (daily mean-fare forecast) ===")
+        print("\n=== Real 2026 test results (hourly mean-fare forecast) ===")
         print(f"  Test RMSE: {metrics['rmse']:.4f}")
         print(f"  Test MAE:  {metrics['mae']:.4f}")
         print(f"  Test R2:   {metrics['r2']:.4f}")
