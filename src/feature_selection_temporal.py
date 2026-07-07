@@ -50,6 +50,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 
+import src.config as _config
 from src.config import DATA_PATHS, TARGET_COL
 from src.data.loader import load_parquet_files, load_taxi_zones
 from src.data.cleaner import clean_training_data
@@ -57,6 +58,14 @@ from src.features.engineer import FeatureEngineer, get_raw_input_features
 from src.models.trainer import train_model
 from src.models.shap_analysis import shap_importance, shap_importance_over_folds
 from src.train import temporal_split, forward_chain_splits
+
+# This routine IS how SELECTED_FEATURES gets set in the first place -- if
+# config.SELECTED_FEATURES is already populated (from a prior selection
+# round), get_tree_features() would silently restrict the candidate pool to
+# just that prior result, defeating a re-run. Disable the restriction for
+# the duration of this script so the sweep sees every engineered feature,
+# including any added to NUMERIC_FEATURES since the last selection round.
+_config.SELECTED_FEATURES = None
 
 MODEL_NAME = "lgbm"  # trial scope: LGBM only
 K_GRID_STEP = 10      # grid resolution below the full feature count
