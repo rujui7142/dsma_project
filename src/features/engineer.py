@@ -419,8 +419,8 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         """Select and order columns for tree-based models.
 
         Includes the learned top-zone one-hot columns (set during fit). If
-        config.SELECTED_FEATURES is set (by select_features.py), the output is
-        restricted to that learned "most predictive" subset.
+        config.SELECTED_FEATURES is set (by feature_selection_temporal.py), the
+        output is restricted to that learned "most predictive" subset.
         """
         cols = self.get_feature_names()
         cols = [c for c in cols if c in df.columns]

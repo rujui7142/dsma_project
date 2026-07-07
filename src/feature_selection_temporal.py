@@ -208,8 +208,7 @@ def main():
             # FeatureEngineer picks its own top-N most frequent pickup
             # zones), so a column present in `ranking` (built from the
             # union of all folds' SHAP tables) isn't guaranteed to exist in
-            # every individual fold's cached matrix -- same guard
-            # select_features.py's _cv_rmse already uses for this reason.
+            # every individual fold's cached matrix, so filter per fold.
             use = [c for c in cols if c in X_tr.columns]
             _, metrics = train_model(MODEL_NAME, X_tr[use], y_tr, X_vl[use], y_vl)
             cv_maes.append(metrics["mae"])
