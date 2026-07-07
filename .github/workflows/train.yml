@@ -51,7 +51,7 @@ jobs:
       - name: Baseline (raw features, no engineering)
         if: ${{ github.event.inputs.run_baseline == 'true' }}
         run: |
-          python -m src.baseline \
+          python -m src.cli baseline \
             --sample ${{ github.event.inputs.sample_size || '5000' }} \
             --tag baseline
 
@@ -66,7 +66,7 @@ jobs:
 
       - name: Train (CV + final models)
         run: |
-          python -m src.train \
+          python -m src.cli train \
             --sample ${{ github.event.inputs.sample_size || '5000' }} \
             --tag ${{ env.RUN_TAG }}
 
@@ -77,7 +77,7 @@ jobs:
       - name: Evaluate on 2026 test set
         run: |
           if ls test_set/*.parquet 1>/dev/null 2>&1; then
-            python -m src.evaluate --tag ${{ env.RUN_TAG }}
+            python -m src.cli evaluate --tag ${{ env.RUN_TAG }}
           else
             echo "No test parquets found — skipping evaluate.py"
           fi
